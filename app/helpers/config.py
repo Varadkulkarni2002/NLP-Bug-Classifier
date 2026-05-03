@@ -2,7 +2,7 @@ import os
 import json
 import torch
 
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 SBERT_PATH      = os.path.join(BASE_DIR, "models", "best_bugzilla_sbert")
 CLASSIFIER_PATH = os.path.join(BASE_DIR, "models", "classifier", "best_model.pt")

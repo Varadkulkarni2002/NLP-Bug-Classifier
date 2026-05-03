@@ -6,7 +6,6 @@ from app.helpers.config import (
 from app.helpers.trend_analysis import (
     compute_session_analytics,
     trend_bars_html,
-    cross_session_trends,
 )
 from app.helpers.chat_history import list_sessions, clear_all_sessions
 
