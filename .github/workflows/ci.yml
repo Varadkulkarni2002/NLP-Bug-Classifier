@@ -1,0 +1,292 @@
+name: NLP Bug Classifier CI/CD
+
+on:
+  push:
+    branches: [ main, dev ]
+  pull_request:
+    branches: [ main ]
+
+env:
+  PYTHON_VERSION: "3.10"
+
+jobs:
+
+  lint-and-import:
+    name: Lint & Import Check
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository with LFS
+        uses: actions/checkout@v4
+        with:
+          lfs: true
+
+      - name: Pull LFS files
+        run: git lfs pull
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Cache pip dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Check syntax on all Python files
+        run: |
+          python -m py_compile app/helpers/config.py
+          python -m py_compile app/helpers/classifier.py
+          python -m py_compile app/helpers/sbert.py
+          python -m py_compile app/helpers/pdf_parser.py
+          python -m py_compile app/helpers/pdf_report.py
+          python -m py_compile app/helpers/exporter.py
+          python -m py_compile app/helpers/chat_history.py
+          python -m py_compile app/helpers/trend_analysis.py
+          python -m py_compile app/helpers/solution_agent.py
+          python -m py_compile app/ui/components.py
+          python -m py_compile app/main.py
+
+      - name: Verify model files exist after LFS pull
+        run: |
+          python - <<'EOF'
+          import os
+          files = [
+              "models/best_bugzilla_sbert/model.safetensors",
+              "models/best_bugzilla_sbert/config.json",
+              "models/best_bugzilla_sbert/tokenizer.json",
+              "models/classifier/best_model.pt",
+              "models/classifier/run_config.json",
+          ]
+          missing = [f for f in files if not os.path.exists(f)]
+          if missing:
+              print(f"MISSING model files: {missing}")
+              exit(1)
+          print("All model files present.")
+          EOF
+
+      - name: Verify data files exist
+        run: |
+          python - <<'EOF'
+          import os
+          files = [
+              "data/classifier/train_clean.csv",
+              "data/classifier/val_final.csv",
+              "data/classifier/test_final.csv",
+              "data/sbert/sbert_train.csv",
+              "data/sbert/sbert_val.csv",
+              "data/sbert/sbert_test.csv",
+              "metrics/test_metrics.json",
+              "metrics/training_history.json",
+          ]
+          missing = [f for f in files if not os.path.exists(f)]
+          if missing:
+              print(f"MISSING data files: {missing}")
+              exit(1)
+          print("All data files present.")
+          EOF
+
+  smoke-test:
+    name: Smoke Test Pipeline
+    runs-on: ubuntu-latest
+    needs: lint-and-import
+
+    steps:
+      - name: Checkout repository with LFS
+        uses: actions/checkout@v4
+        with:
+          lfs: true
+
+      - name: Pull LFS files
+        run: git lfs pull
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Cache pip dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run smoke tests
+        run: |
+          python - <<'EOF'
+          import sys
+          sys.path.insert(0, ".")
+
+          print("--- Testing config ---")
+          from app.helpers.config import (
+              BUG_TYPE_LABELS, SEVERITY_LABELS, FIX_TIME_LABELS,
+              TEMPERATURE, CONF_THRESHOLD, DEDUP_THRESHOLD,
+              SBERT_PATH, CLASSIFIER_PATH,
+          )
+          assert len(BUG_TYPE_LABELS) == 5,  f"Expected 5 bug types, got {len(BUG_TYPE_LABELS)}"
+          assert len(SEVERITY_LABELS)  == 3,  f"Expected 3 severities, got {len(SEVERITY_LABELS)}"
+          assert len(FIX_TIME_LABELS)  == 3,  f"Expected 3 fix times, got {len(FIX_TIME_LABELS)}"
+          assert 0 < TEMPERATURE      <= 2.0, "Temperature out of range"
+          assert 0 < CONF_THRESHOLD   <= 1.0, "Confidence threshold out of range"
+          assert 0 < DEDUP_THRESHOLD  <= 1.0, "Dedup threshold out of range"
+          print(f"  BUG_TYPE_LABELS  : {BUG_TYPE_LABELS}")
+          print(f"  SEVERITY_LABELS  : {SEVERITY_LABELS}")
+          print(f"  FIX_TIME_LABELS  : {FIX_TIME_LABELS}")
+          print(f"  TEMPERATURE      : {TEMPERATURE}")
+          print(f"  CONF_THRESHOLD   : {CONF_THRESHOLD}")
+          print(f"  DEDUP_THRESHOLD  : {DEDUP_THRESHOLD}")
+          print("  PASSED")
+
+          print("--- Testing pdf_parser ---")
+          from app.helpers.pdf_parser import split_text_input, clean_bug_text
+          bugs = split_text_input(
+              'Bug 1: "App crashes on upload." '
+              'Bug 2: "Login button overlaps footer." '
+              'Bug 3: "Memory leak in dashboard."'
+          )
+          assert len(bugs) == 3, f"Expected 3 bugs from split, got {len(bugs)}: {bugs}"
+          cleaned = clean_bug_text("  extra   spaces   here  ", max_chars=10)
+          assert len(cleaned) <= 13, "clean_bug_text did not truncate"
+          print(f"  Split result     : {[b[:40] for b in bugs]}")
+          print("  PASSED")
+
+          print("--- Testing trend_analysis ---")
+          from app.helpers.trend_analysis import compute_session_analytics, trend_bars_html
+          mock_results = [
+              {"bug_type": "Crash",     "severity": "critical", "fix_time": "slow",
+               "bt_conf": 85.0, "sv_conf": 90.0, "ft_conf": 70.0, "is_uncertain": False},
+              {"bug_type": "Freeze",    "severity": "major",    "fix_time": "medium",
+               "bt_conf": 55.0, "sv_conf": 65.0, "ft_conf": 60.0, "is_uncertain": True},
+              {"bug_type": "UI/Visual", "severity": "minor",    "fix_time": "fast",
+               "bt_conf": 92.0, "sv_conf": 88.0, "ft_conf": 95.0, "is_uncertain": False},
+          ]
+          analytics = compute_session_analytics(mock_results, total=5, dup_count=2)
+          assert analytics["total"]        == 5
+          assert analytics["dup_count"]    == 2
+          assert analytics["unique"]       == 3
+          assert analytics["uncertain"]    == 1
+          assert analytics["dup_rate"]     == 40.0
+          assert analytics["dominant_type"] in ["Crash", "Freeze", "UI/Visual"]
+          bars = trend_bars_html(analytics["type_counts"], analytics["unique"])
+          assert "<div" in bars, "trend_bars_html returned empty"
+          print(f"  Analytics        : {analytics}")
+          print("  PASSED")
+
+          print("--- Testing exporter ---")
+          from app.helpers.exporter import export_csv, export_json
+          mock_full = [
+              {"original_index": 0, "text": "App crashes.", "bug_type": "Crash",
+               "severity": "critical", "fix_time": "slow",
+               "bt_conf": 85.0, "sv_conf": 90.0, "ft_conf": 70.0, "is_uncertain": False},
+          ]
+          mock_bugs   = ["App crashes."]
+          mock_dupmap = {}
+          csv_bytes   = export_csv(mock_full, mock_bugs, mock_dupmap)
+          json_bytes  = export_json(mock_full, mock_bugs, mock_dupmap)
+          assert b"bug_type" in csv_bytes,  "CSV missing headers"
+          assert b"Crash"    in csv_bytes,  "CSV missing data"
+          assert b"bug_type" in json_bytes, "JSON missing fields"
+          print(f"  CSV size         : {len(csv_bytes)} bytes")
+          print(f"  JSON size        : {len(json_bytes)} bytes")
+          print("  PASSED")
+
+          print("--- Testing chat_history ---")
+          import tempfile, os
+          from unittest.mock import patch
+          tmp = tempfile.NamedTemporaryFile(suffix=".json", delete=False)
+          tmp.close()
+          with patch("app.helpers.chat_history.CHAT_HISTORY_PATH", tmp.name):
+              from app.helpers import chat_history
+              chat_history.CHAT_HISTORY_PATH = tmp.name
+              sid = chat_history.save_session("Test session", mock_full, mock_bugs, 1, 0)
+              sessions = chat_history.list_sessions()
+              assert len(sessions) >= 1,       "Session not saved"
+              assert sessions[0]["label"] == "Test session", "Label mismatch"
+              loaded = chat_history.load_session(sid)
+              assert loaded is not None,       "Session not loadable"
+              deleted = chat_history.delete_session(sid)
+              assert deleted,                  "Session not deleted"
+          os.unlink(tmp.name)
+          print(f"  Session ID       : {sid}")
+          print("  PASSED")
+
+          print("--- Testing sbert dedup (no model load) ---")
+          import numpy as np
+          from app.helpers.sbert import similarity_matrix
+          fake_emb = np.array([
+              [1.0, 0.0, 0.0],
+              [0.9, 0.1, 0.0],
+              [0.0, 0.0, 1.0],
+          ], dtype=np.float32)
+          sim = similarity_matrix(fake_emb)
+          assert sim[0][1] > 0.8,  "Similar embeddings should score > 0.8"
+          assert sim[0][2] < 0.2,  "Different embeddings should score < 0.2"
+          print(f"  Similarity [0,1] : {sim[0][1]:.4f} (expected > 0.8)")
+          print(f"  Similarity [0,2] : {sim[0][2]:.4f} (expected < 0.2)")
+          print("  PASSED")
+
+          print("")
+          print("=" * 50)
+          print("All smoke tests PASSED")
+          print("=" * 50)
+          EOF
+
+  deploy-check:
+    name: Deploy Readiness Check
+    runs-on: ubuntu-latest
+    needs: smoke-test
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+
+    steps:
+      - name: Checkout repository with LFS
+        uses: actions/checkout@v4
+        with:
+          lfs: true
+
+      - name: Pull LFS files
+        run: git lfs pull
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Verify Streamlit app starts without error
+        run: |
+          timeout 30 streamlit run app/main.py \
+            --server.headless true \
+            --server.port 8501 \
+            --server.address localhost \
+            &
+          sleep 15
+          curl -f http://localhost:8501/_stcore/health || exit 1
+          echo "Streamlit health check passed"
+
+      - name: Deployment ready
+        run: |
+          echo "========================================="
+          echo "  All checks passed — ready to deploy"
+          echo "  Branch : ${{ github.ref_name }}"
+          echo "  Commit : ${{ github.sha }}"
+          echo "========================================="
