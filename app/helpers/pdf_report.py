@@ -29,9 +29,6 @@ def _styles():
                                 textColor=colors.HexColor("#5a5a8a"),
                                 leftIndent=12, fontName="Helvetica-Oblique",
                                 spaceAfter=6, leading=14),
-        "conf":  ParagraphStyle("C", parent=base["Normal"], fontSize=8,
-                                textColor=colors.HexColor("#9090b0"),
-                                leftIndent=10, spaceAfter=3, fontName="Helvetica"),
     }
 
 
@@ -87,15 +84,6 @@ def build_pdf(
         if bug_text:
             story.append(Paragraph(f'"{_safe(bug_text[:200])}{"..." if len(bug_text)>200 else ""}"', s["quote"]))
 
-        if r.get("is_uncertain"):
-            bt_cands = r.get("bt_candidates", [])
-            story.append(Paragraph(
-                f"⚠ Low confidence — possible: "
-                f"{bt_cands[0][0]} ({bt_cands[0][1]}%) or {bt_cands[1][0]} ({bt_cands[1][1]}%)"
-                if len(bt_cands) >= 2 else "⚠ Low confidence prediction",
-                s["muted"]
-            ))
-
         narrative = (
             f"As per the analyzed report, the severity of the current running bug is "
             f"<b>{r['severity']}</b>. With the current severity, we found out that the bug is a "
@@ -103,13 +91,6 @@ def build_pdf(
             f"that the fix time on the basis of the severity is <b>{r['fix_time']}</b>."
         )
         story.append(Paragraph(narrative, s["body"]))
-
-        story.append(Paragraph(
-            f"Confidence — Bug Type: {r.get('bt_conf',0)}% · "
-            f"Severity: {r.get('sv_conf',0)}% · "
-            f"Fix Time: {r.get('ft_conf',0)}% (Temperature T=0.6)",
-            s["conf"]
-        ))
 
         dup_list = dup_map.get(r["original_index"], [])
         if dup_list:

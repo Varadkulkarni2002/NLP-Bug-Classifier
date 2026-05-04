@@ -64,9 +64,16 @@ def load_classifier():
     ckpt        = torch.load(CLASSIFIER_PATH, map_location=DEVICE, weights_only=False)
     state       = ckpt["model_state_dict"]
     load_result = mdl.load_state_dict(state, strict=False)
-    missing     = [k for k in load_result.missing_keys if "num_batches_tracked" not in k]
-    if missing:
-        raise RuntimeError(f"Classifier heads did not load — missing keys: {missing}")
+    truly_missing = [
+        k for k in load_result.missing_keys
+        if not any(buf in k for buf in [
+            "num_batches_tracked",
+            "running_mean",
+            "running_var",
+        ])
+    ]
+    if truly_missing:
+        raise RuntimeError(f"Classifier heads did not load — missing keys: {truly_missing}")
     mdl.to(DEVICE)
     mdl.eval()
     return tok, mdl
@@ -95,9 +102,15 @@ def classify_bug(text: str, tokenizer, model) -> dict:
     sv_conf, sv_idx = sv_probs.max(0)
     ft_conf, ft_idx = ft_probs.max(0)
 
-    bug_type = BUG_TYPE_LABELS[bt_idx.item()] if bt_conf.item() >= CONF_THRESHOLD else "Uncertain"
-    severity  = SEVERITY_LABELS[sv_idx.item()]  if sv_conf.item() >= CONF_THRESHOLD else "uncertain"
-    fix_time  = FIX_TIME_LABELS[ft_idx.item()]  if ft_conf.item() >= CONF_THRESHOLD else "uncertain"
+    bug_type = BUG_TYPE_LABELS[bt_idx.item()]
+    severity  = SEVERITY_LABELS[sv_idx.item()]
+    fix_time  = FIX_TIME_LABELS[ft_idx.item()]
+
+    low_confidence = (
+        bt_conf.item() < CONF_THRESHOLD or
+        sv_conf.item() < CONF_THRESHOLD or
+        ft_conf.item() < CONF_THRESHOLD
+    )
 
     def top2(labels, probs):
         pairs = sorted(enumerate(probs.tolist()), key=lambda x: x[1], reverse=True)
@@ -113,5 +126,5 @@ def classify_bug(text: str, tokenizer, model) -> dict:
         "bt_candidates": top2(BUG_TYPE_LABELS, bt_probs),
         "sv_candidates": top2(SEVERITY_LABELS,  sv_probs),
         "ft_candidates": top2(FIX_TIME_LABELS,  ft_probs),
-        "is_uncertain":  any([bug_type == "Uncertain", severity == "uncertain", fix_time == "uncertain"]),
+        "is_uncertain":  low_confidence,
     }

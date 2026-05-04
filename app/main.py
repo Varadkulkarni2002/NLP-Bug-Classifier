@@ -91,7 +91,7 @@ def _store_and_rerun(results, bugs, dup_map, total, dup_count, pdf_bytes, label)
 def main():
     _init_state()
     inject_css()
-    render_sidebar()
+    render_sidebar()  # <-- Added this to render the sidebar!
     render_header()
 
     if st.session_state.results is None and not st.session_state.processing:
@@ -148,19 +148,25 @@ def main():
             render_bug_card(r, i, bugs, dup_map)
 
             if st.session_state.get(f"show_solution_{i}"):
-                from app.helpers.solution_agent import get_solution
+                from app.helpers.solution_agent import get_solution_for_bug, render_solution_card
                 bug_text  = st.session_state.get(f"solution_bug_{i}", "")
                 bug_type  = st.session_state.get(f"solution_type_{i}", "")
                 with st.spinner("Finding solution…"):
-                    solution = get_solution(bug_text, bug_type)
+                    sol_dict = get_solution_for_bug(bug_text, bug_type)
+                    # Create a dummy wrapper so render_solution_card can parse it correctly
+                    sol_dict["bug_text"] = bug_text
+                    sol_dict["severity"] = r["severity"]
+                    sol_dict["fix_time"] = r["fix_time"]
+                    solution_html = render_solution_card(sol_dict, i + 1)
+                
                 ai_bubble(f"""
                 <div style="background:rgba(52,211,153,0.06);border:1px solid rgba(52,211,153,0.2);
                             border-radius:10px;padding:0.8rem 1rem;margin-top:0.3rem;">
                     <div style="font-family:'Syne',sans-serif;font-size:0.65rem;font-weight:700;
                                 letter-spacing:0.07em;color:#34d399;text-transform:uppercase;
                                 margin-bottom:0.5rem;">💡 AI Solution Suggestion</div>
-                    {solution}
-                </div>""")
+                    {solution_html}
+                </div>""", unsafe_allow_html=True)
                 st.session_state[f"show_solution_{i}"] = False
 
         render_export_buttons(st.session_state.pdf_bytes, results, bugs, dup_map)

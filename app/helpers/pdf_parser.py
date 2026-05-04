@@ -4,15 +4,32 @@ from pypdf import PdfReader
 
 def extract_paragraphs(uploaded_file) -> list[str]:
     reader = PdfReader(uploaded_file)
-    paras  = []
+    full_text = ""
     for page in reader.pages:
-        raw    = page.extract_text() or ""
-        blocks = re.split(r'\n{2,}', raw)
-        for b in blocks:
-            cleaned = re.sub(r'\s+', ' ', b).strip()
-            if len(cleaned) > 40:
-                paras.append(cleaned)
-    return paras
+        full_text += (page.extract_text() or "") + "\n\n"
+
+    # 1. Check for explicit numbered bugs (Bug 1:, Bug 2:)
+    numbered = re.split(r'(?=Bug\s+\d+\s*[:\-])', full_text, flags=re.IGNORECASE)
+    if len(numbered) > 1:
+        return [re.sub(r'\s+', ' ', p).strip() for p in numbered if len(p.strip()) > 10]
+
+    # 2. Reconstruct paragraphs by removing single newlines (which break sentences in PDFs)
+    clean_text = re.sub(r'(?<!\n)\n(?!\n)', ' ', full_text)
+
+    # 3. Split by actual paragraph breaks (double newlines)
+    blocks = re.split(r'\n{2,}', clean_text)
+    paras = []
+    for b in blocks:
+        cleaned = re.sub(r'\s+', ' ', b).strip()
+        if len(cleaned) > 20:
+            paras.append(cleaned)
+
+    # 4. If it's still just one massive block, split by sentences
+    if len(paras) <= 1 and len(full_text) > 50:
+        by_sentence = re.split(r'(?<=[.!?])\s{1,}', clean_text)
+        paras = [p.strip() for p in by_sentence if len(p.strip()) > 15]
+
+    return paras if paras else [full_text.strip()]
 
 
 def split_text_input(raw: str) -> list[str]:

@@ -1,208 +1,197 @@
 import os
-import re
 import time
-import requests
+import json
 import streamlit as st
-from bs4 import BeautifulSoup
-from sentence_transformers import SentenceTransformer, util
+from groq import Groq
+from dotenv import load_dotenv
 from app.helpers.config import BASE_DIR
 
-MINILM_MODEL_NAME = "all-MiniLM-L6-v2"
-MINILM_CACHE_PATH = os.path.join(BASE_DIR, "models", "minilm")
+# 1. Point explicitly to the .env file at the root of your project
+env_path = os.path.join(BASE_DIR, ".env")
+load_dotenv(dotenv_path=env_path)
 
-HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) "
-        "Chrome/124.0.0.0 Safari/537.36"
+# 2. Fetch the key securely
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+
+try:
+    if not GROQ_API_KEY:
+        raise ValueError(f"GROQ_API_KEY not found. Make sure your file is named exactly '.env' and is located at {env_path}")
+    client = Groq(api_key=GROQ_API_KEY)
+except Exception as e:
+    print(f"[solution_agent] Groq initialization failed: {e}")
+    client = None
+
+def get_solution_for_bug(bug_text: str, bug_type: str) -> dict:
+    if not client:
+        return _error_state(bug_text, bug_type, "Groq client not initialized. Check your API key.")
+
+    print(f"\n[solution_agent] Querying Groq for: {bug_text[:60]}...")
+    
+    prompt = f"""You are a senior software engineer. Analyze this bug report:
+Bug Description: {bug_text}
+Bug Type: {bug_type}
+
+Provide a root cause analysis and a recommended fix. 
+Respond ONLY with a valid JSON object containing exactly three string keys:
+"why": A short, technical explanation of the root cause (2-3 sentences).
+"fix": A clear, actionable recommended fix (2-3 sentences).
+"code": A relevant code snippet implementing the fix. If no code is needed, leave as an empty string. Do not use markdown backticks inside the JSON string value.
+"""
+    try:
+        # Using the latest supported Llama 3.3 70B model
+        response = client.chat.completions.create(
+            messages=[{"role": "user", "content": prompt}],
+            model="llama-3.3-70b-versatile",
+            temperature=0.2,
+            response_format={"type": "json_object"}
+        )
+        
+        content = response.choices[0].message.content
+        sol_data = json.loads(content)
+        
+        return {
+            "query": bug_text[:100],
+            "mode": "groq",
+            "bug_type": bug_type,
+            "groq_data": sol_data
+        }
+    except Exception as e:
+        print(f"[solution_agent] Groq API Error: {e}")
+        return _error_state(bug_text, bug_type, str(e))
+
+def _error_state(bug_text: str, bug_type: str, error_msg: str) -> dict:
+    return {
+        "query": bug_text[:100],
+        "mode": "error",
+        "bug_type": bug_type,
+        "groq_data": {
+            "why": "API Connection Failed",
+            "fix": f"Could not generate solution. Error: {error_msg}",
+            "code": ""
+        }
+    }
+
+def get_solutions_for_all_bugs(results: list[dict]) -> list[dict]:
+    solutions = []
+    for r in results:
+        bug_text = r.get("text", "")
+        if not bug_text:
+            continue
+            
+        sol = get_solution_for_bug(bug_text, r.get("bug_type", "Other"))
+        solutions.append({
+            "bug_text":  bug_text,
+            "bug_type":  r.get("bug_type", ""),
+            "severity":  r.get("severity", ""),
+            "fix_time":  r.get("fix_time", ""),
+            "mode":      sol["mode"],
+            "groq_data": sol["groq_data"]
+        })
+        # Groq is fast, but a tiny sleep prevents rate-limiting on the free tier
+        time.sleep(0.5) 
+    return solutions
+
+def _render_answer_html(solution: dict) -> str:
+    groq_data = solution.get("groq_data", {})
+    why_text  = groq_data.get("why", "No analysis available.")
+    fix_text  = groq_data.get("fix", "No fix available.")
+    code_text = groq_data.get("code", "")
+    mode      = solution.get("mode", "error")
+
+    if mode == "error":
+        return f'<div style="font-size:0.75rem;color:#dc2626;font-weight:600;padding:1rem;background:#fee2e2;border-radius:8px;text-align:center;">{fix_text}</div>'
+
+    answer = (
+        f'<div style="font-size:0.7rem;font-weight:600;color:#dc2626;'
+        f'text-transform:uppercase;letter-spacing:0.06em;margin-bottom:0.35rem;">'
+        f'Root Cause Analysis</div>'
+        f'<p style="font-size:0.855rem;color:#1c1b20;line-height:1.8;'
+        f'margin-bottom:0.85rem;">{why_text}</p>'
+        f'<div style="font-size:0.7rem;font-weight:600;color:#16a34a;'
+        f'text-transform:uppercase;letter-spacing:0.06em;margin-bottom:0.35rem;">'
+        f'Recommended Fix</div>'
+        f'<p style="font-size:0.855rem;color:#1c1b20;line-height:1.8;'
+        f'margin-bottom:0.5rem;">{fix_text}</p>'
     )
-}
 
-SO_SEARCH_URL     = "https://api.stackexchange.com/2.3/search/advanced"
-GITHUB_SEARCH_URL = "https://api.github.com/search/issues"
-
-BUG_TYPE_KEYWORDS = {
-    "Crash":     ["crash", "fatal error", "exception", "force quit", "terminated"],
-    "Freeze":    ["freeze", "hang", "not responding", "locks up", "deadlock"],
-    "Memory":    ["memory leak", "RAM usage", "out of memory", "heap", "garbage collection"],
-    "UI/Visual": ["UI bug", "visual glitch", "overlap", "layout broken", "CSS"],
-    "Other":     ["bug fix", "issue", "error"],
-}
-
-
-@st.cache_resource(show_spinner=False)
-def _load_minilm() -> SentenceTransformer:
-    os.makedirs(MINILM_CACHE_PATH, exist_ok=True)
-    model = SentenceTransformer(MINILM_MODEL_NAME, cache_folder=MINILM_CACHE_PATH)
-    return model
-
-
-def _build_query(bug_text: str, bug_type: str) -> str:
-    keywords = BUG_TYPE_KEYWORDS.get(bug_type, BUG_TYPE_KEYWORDS["Other"])
-    clean    = re.sub(r'Bug\s+\d+\s*[:\-]', '', bug_text, flags=re.IGNORECASE).strip()
-    clean    = re.sub(r'["\']', '', clean).strip()
-    clean    = clean[:120]
-    kw       = keywords[0]
-    return f"{clean} {kw} fix"
-
-
-def _scrape_stackoverflow(query: str, max_results: int = 3) -> list[dict]:
-    try:
-        params = {
-            "order":    "desc",
-            "sort":     "relevance",
-            "q":        query,
-            "site":     "stackoverflow",
-            "pagesize": max_results,
-            "filter":   "withbody",
-        }
-        resp = requests.get(SO_SEARCH_URL, params=params, headers=HEADERS, timeout=8)
-        if resp.status_code != 200:
-            return []
-        data  = resp.json()
-        items = data.get("items", [])
-        results = []
-        for item in items[:max_results]:
-            title   = item.get("title", "")
-            link    = item.get("link", "")
-            body    = BeautifulSoup(item.get("body", ""), "html.parser").get_text()
-            body    = re.sub(r'\s+', ' ', body).strip()[:400]
-            score   = item.get("score", 0)
-            answers = item.get("answer_count", 0)
-            if title and link:
-                results.append({
-                    "source":  "Stack Overflow",
-                    "title":   title,
-                    "url":     link,
-                    "snippet": body,
-                    "score":   score,
-                    "answers": answers,
-                })
-        return results
-    except Exception:
-        return []
-
-
-def _scrape_github(query: str, bug_type: str, max_results: int = 2) -> list[dict]:
-    try:
-        params = {
-            "q":        f"{query} is:issue is:closed label:bug",
-            "sort":     "reactions",
-            "order":    "desc",
-            "per_page": max_results,
-        }
-        resp = requests.get(GITHUB_SEARCH_URL, params=params, headers=HEADERS, timeout=8)
-        if resp.status_code != 200:
-            return []
-        items   = resp.json().get("items", [])
-        results = []
-        for item in items[:max_results]:
-            title   = item.get("title", "")
-            url     = item.get("html_url", "")
-            body    = item.get("body") or ""
-            body    = re.sub(r'\s+', ' ', body).strip()[:300]
-            if title and url:
-                results.append({
-                    "source":  "GitHub Issues",
-                    "title":   title,
-                    "url":     url,
-                    "snippet": body,
-                    "score":   item.get("reactions", {}).get("total_count", 0),
-                    "answers": 0,
-                })
-        return results
-    except Exception:
-        return []
-
-
-def _rank_by_relevance(
-    bug_text: str,
-    results:  list[dict],
-    model:    SentenceTransformer,
-) -> list[dict]:
-    if not results:
-        return []
-    bug_emb     = model.encode(bug_text, convert_to_tensor=True)
-    snippets    = [f"{r['title']} {r['snippet']}" for r in results]
-    snip_embs   = model.encode(snippets, convert_to_tensor=True)
-    scores      = util.cos_sim(bug_emb, snip_embs)[0].tolist()
-    for i, r in enumerate(results):
-        r["relevance"] = round(scores[i], 4)
-    return sorted(results, key=lambda x: x["relevance"], reverse=True)
-
-
-def _format_solution_html(
-    bug_text:  str,
-    bug_type:  str,
-    results:   list[dict],
-) -> str:
-    if not results:
-        return (
-            '<div style="color:var(--muted);font-size:0.82rem;">'
-            'No relevant solutions found online for this bug. '
-            'Try searching manually on Stack Overflow or GitHub Issues.'
-            '</div>'
+    if code_text and code_text.strip():
+        answer += (
+            f'<div style="font-size:0.68rem;font-weight:600;color:#2563eb;'
+            f'margin-bottom:0.3rem;margin-top:0.8rem;">Code Implementation</div>'
+            f'<pre style="background:#f1f5f9;border:1px solid #e2e8f0;'
+            f'border-radius:8px;padding:0.7rem 0.9rem;font-size:0.76rem;'
+            f'color:#1e293b;overflow-x:auto;line-height:1.6;'
+            f'white-space:pre-wrap;margin-bottom:0.6rem;">{code_text.strip()}</pre>'
         )
 
-    source_icon = {"Stack Overflow": "🟠", "GitHub Issues": "🐙"}
-    cards       = ""
-    for r in results[:4]:
-        icon      = source_icon.get(r["source"], "🔗")
-        relevance = int(r["relevance"] * 100)
-        snippet   = r["snippet"][:250] + ("..." if len(r["snippet"]) > 250 else "")
-        score_txt = f"Score: {r['score']}" if r["score"] else ""
-        ans_txt   = f"· {r['answers']} answers" if r.get("answers") else ""
-        cards += f"""
-        <div style="background:rgba(255,255,255,0.025);border:1px solid rgba(255,255,255,0.08);
-                    border-radius:9px;padding:0.7rem 0.85rem;margin-bottom:0.55rem;">
-            <div style="display:flex;align-items:center;justify-content:space-between;
-                        margin-bottom:0.35rem;">
-                <span style="font-size:0.7rem;color:var(--muted);">
-                    {icon} {r['source']} &nbsp;·&nbsp; {score_txt}{ans_txt}
-                </span>
-                <span style="font-size:0.65rem;background:rgba(52,211,153,0.12);
-                             color:#34d399;border:1px solid rgba(52,211,153,0.2);
-                             border-radius:20px;padding:0.1rem 0.45rem;">
-                    {relevance}% match
-                </span>
-            </div>
-            <div style="font-size:0.82rem;font-weight:600;color:var(--text);margin-bottom:0.3rem;">
-                <a href="{r['url']}" target="_blank"
-                   style="color:var(--accent2);text-decoration:none;">
-                    {r['title']}
-                </a>
-            </div>
-            <div style="font-size:0.75rem;color:var(--muted);line-height:1.55;">
-                {snippet}
-            </div>
-        </div>"""
+    return answer
 
-    keywords_used = ", ".join(BUG_TYPE_KEYWORDS.get(bug_type, ["bug fix"])[:3])
+def render_solution_card(solution: dict, bug_number: int) -> str:
+    bug_text = solution["bug_text"]
+    severity = solution["severity"]
+    bug_type = solution["bug_type"]
+    fix_time = solution["fix_time"]
+
+    sev_color = {
+        "critical": "#dc2626",
+        "major":    "#ea580c",
+        "minor":    "#16a34a",
+    }.get(severity.lower(), "#6c47ff")
+    sev_bg = {
+        "critical": "#fee2e2",
+        "major":    "#ffedd5",
+        "minor":    "#dcfce7",
+    }.get(severity.lower(), "#ede9ff")
+
+    answer_html = _render_answer_html(solution)
+
     return f"""
-    <div style="font-size:0.75rem;color:var(--muted);margin-bottom:0.65rem;">
-        Searched Stack Overflow &amp; GitHub Issues for
-        <strong style="color:var(--accent2);">{bug_type}</strong> bugs ·
-        keywords: <em>{keywords_used}</em>
-    </div>
-    {cards}
-    <div style="font-size:0.7rem;color:var(--dim);margin-top:0.4rem;">
-        Results ranked by semantic similarity to your bug description using MiniLM.
+    <div style="background:#ffffff;border:1px solid #e8e6df;
+                border-radius:12px;padding:1rem 1.1rem;margin-bottom:0.85rem;
+                border-left:3px solid {sev_color};
+                box-shadow:0 1px 3px rgba(0,0,0,0.06);">
+        <div style="font-size:0.62rem;font-weight:600;color:#9896a8;
+                    text-transform:uppercase;letter-spacing:0.08em;
+                    margin-bottom:0.4rem;">Bug #{bug_number}</div>
+        <div style="font-size:0.8rem;color:#6b6880;font-style:italic;
+                    background:#f8f7f4;border-radius:7px;
+                    padding:0.45rem 0.65rem;margin-bottom:0.6rem;line-height:1.5;">
+            {bug_text[:180]}{"…" if len(bug_text) > 180 else ""}
+        </div>
+        <div style="display:flex;gap:0.35rem;flex-wrap:wrap;margin-bottom:0.75rem;">
+            <span style="padding:0.2rem 0.6rem;border-radius:20px;font-size:0.63rem;
+                         font-weight:600;color:{sev_color};background:{sev_bg};">
+                {severity.upper()}
+            </span>
+            <span style="padding:0.2rem 0.6rem;border-radius:20px;font-size:0.63rem;
+                         font-weight:600;color:#6c47ff;background:#ede9ff;">
+                {bug_type}
+            </span>
+            <span style="padding:0.2rem 0.6rem;border-radius:20px;font-size:0.63rem;
+                         font-weight:600;color:#2563eb;background:#dbeafe;">
+                ⏱ {fix_time}
+            </span>
+        </div>
+        {answer_html}
     </div>"""
 
+def render_all_solutions_html(solutions: list[dict]) -> str:
+    if not solutions:
+        return '<p style="color:#7878a8;">No solutions generated.</p>'
 
-def get_solution(bug_text: str, bug_type: str) -> str:
-    try:
-        model   = _load_minilm()
-        query   = _build_query(bug_text, bug_type)
-        so_hits = _scrape_stackoverflow(query, max_results=3)
-        time.sleep(0.5)
-        gh_hits = _scrape_github(query, bug_type, max_results=2)
-        all_hits = so_hits + gh_hits
-        ranked   = _rank_by_relevance(bug_text, all_hits, model)
-        return _format_solution_html(bug_text, bug_type, ranked)
-    except Exception as e:
-        return (
-            f'<div style="color:#fb923c;font-size:0.8rem;">'
-            f'⚠️ Could not fetch solutions: {str(e)[:120]}'
-            f'</div>'
-        )
+    cards = "".join(
+        render_solution_card(s, i + 1)
+        for i, s in enumerate(solutions)
+    )
+
+    return f"""
+    <div style="font-size:0.68rem;font-weight:700;color:#6c47ff;
+                text-transform:uppercase;letter-spacing:0.08em;
+                margin-bottom:0.3rem;">
+        💡 Solution Report — {len(solutions)} bug{"s" if len(solutions) != 1 else ""}
+    </div>
+    <div style="font-size:0.7rem;color:#9896a8;margin-bottom:0.85rem;">
+        Solutions generated in real-time by Llama-3.3 (Groq)
+    </div>
+    {cards}
+    """

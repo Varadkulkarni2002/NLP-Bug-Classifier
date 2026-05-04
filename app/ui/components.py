@@ -1,184 +1,405 @@
 import streamlit as st
-from app.helpers.config import (
-    APP_TITLE, APP_ICON, APP_VERSION, DEVICE,
-    SEVERITY_COLORS, CONF_THRESHOLD, TEMPERATURE,
-)
-from app.helpers.trend_analysis import (
-    compute_session_analytics,
-    trend_bars_html,
-)
-from app.helpers.chat_history import list_sessions, clear_all_sessions
+from app.helpers.config import APP_TITLE, APP_ICON, APP_VERSION, DEVICE, SEVERITY_COLORS
+from app.helpers.trend_analysis import compute_session_analytics, trend_bars_html
+from app.helpers.chat_history import list_sessions, load_session, clear_all_sessions
 
 
 CSS = """
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Syne:wght@400;500;600;700;800&family=Epilogue:wght@300;400;500;600&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Plus+Jakarta+Sans:wght@600;700;800&display=swap');
 
 :root {
-    --sidebar-bg : #0d0b1e;
-    --main-bg    : #0a0818;
-    --surface    : rgba(255,255,255,0.04);
-    --surface2   : rgba(255,255,255,0.07);
-    --border     : rgba(255,255,255,0.08);
-    --accent     : #7c5cfc;
-    --accent2    : #a78bfa;
-    --accent3    : #38bdf8;
-    --glow       : rgba(124,92,252,0.28);
-    --text       : #ededff;
-    --muted      : #7878a8;
-    --dim        : #44446a;
+    --bg          : #f8f7f4;
+    --bg2         : #f0efe9;
+    --sidebar-bg  : #1a1825;
+    --surface     : #ffffff;
+    --border      : #e8e6df;
+    --border-dark : rgba(255,255,255,0.1);
+    --text        : #1c1b20;
+    --text-2      : #6b6880;
+    --text-3      : #9896a8;
+    --accent      : #6c47ff;
+    --accent-soft : #ede9ff;
+    --accent-2    : #a78bfa;
+    --green       : #16a34a;
+    --green-soft  : #dcfce7;
+    --red         : #dc2626;
+    --red-soft    : #fee2e2;
+    --orange      : #ea580c;
+    --orange-soft : #ffedd5;
+    --shadow-sm   : 0 2px 8px rgba(0,0,0,0.04);
+    --shadow-md   : 0 8px 24px rgba(0,0,0,0.06);
 }
 
-*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-html, body { font-family: 'Epilogue', sans-serif; background: var(--main-bg); color: var(--text); }
-
-.stApp {
-    background:
-        radial-gradient(ellipse 130% 70% at 65% -15%, rgba(124,92,252,0.18) 0%, transparent 55%),
-        radial-gradient(ellipse 70%  50% at -5% 85%, rgba(56,189,248,0.09) 0%, transparent 50%),
-        #0a0818;
+html, body {
+    font-family: 'Inter', sans-serif !important;
+    color: var(--text) !important;
+    background-color: var(--bg) !important;
 }
 
-section[data-testid="stSidebar"] {
-    background   : var(--sidebar-bg) !important;
-    border-right : 1px solid var(--border) !important;
-    min-width    : 256px !important;
-    max-width    : 256px !important;
-}
-section[data-testid="stSidebar"] > div { padding: 0 !important; }
-header[data-testid="stHeader"]         { display: none !important; }
-
-.main .block-container {
-    padding    : 0 !important;
-    max-width  : 100% !important;
+.block-container {
+    padding-top: 2rem !important;
+    padding-bottom: 2rem !important; 
+    max-width: calc(800px + var(--canvas-width, 0px)) !important;
+    padding-right: calc(var(--canvas-width, 0px) + 2rem) !important;
+    transition: padding-right 0.15s ease, max-width 0.15s ease !important;
 }
 
-.chat-col {
-    max-width : 740px;
-    margin    : 0 auto;
-    padding   : 0 1.5rem;
+/* Hide default top header */
+header[data-testid="stHeader"] { display: transparent !important; }
+
+/* ── BUTTONS (General) ── */
+div[data-testid="stButton"] > button {
+    border-radius: 8px !important;
+    font-weight: 500 !important;
+    transition: all 0.2s !important;
+    border: 1px solid var(--border) !important;
+    background-color: var(--surface) !important;
+    color: var(--text) !important;
+}
+div[data-testid="stButton"] > button:hover {
+    border-color: var(--accent) !important;
+    color: var(--accent) !important;
+    box-shadow: var(--shadow-sm) !important;
 }
 
-.chat-hdr {
-    max-width     : 740px;
-    margin        : 0 auto;
-    padding       : 0.9rem 1.5rem 0.75rem;
-    border-bottom : 1px solid var(--border);
-    margin-bottom : 0.75rem;
+/* ── TYPOGRAPHY & HEADER ── */
+.app-header {
+    text-align: center;
+    margin-bottom: 1rem;
 }
-.chat-hdr-title { font-family:'Syne',sans-serif; font-size:0.92rem; font-weight:700; color:var(--text); }
-.chat-hdr-sub   { font-size:0.67rem; color:var(--muted); margin-top:2px; }
-
-.sb-logo { display:flex; align-items:center; gap:0.6rem; padding:0.4rem 0 0.9rem; border-bottom:1px solid var(--border); margin-bottom:0.6rem; }
-.sb-icon { width:32px; height:32px; background:linear-gradient(135deg,var(--accent),var(--accent2)); border-radius:9px; display:flex; align-items:center; justify-content:center; font-size:0.95rem; box-shadow:0 0 14px var(--glow); flex-shrink:0; }
-.sb-name { font-family:'Syne',sans-serif; font-size:0.86rem; font-weight:700; color:var(--text); }
-.sb-sub  { font-size:0.6rem; color:var(--muted); }
-.sb-sec  { font-size:0.6rem; font-weight:700; letter-spacing:0.09em; color:var(--dim); text-transform:uppercase; padding:0.55rem 0.3rem 0.25rem; }
-
-.hist-item { display:flex; align-items:center; gap:0.45rem; padding:0.48rem 0.65rem; border-radius:7px; font-size:0.77rem; color:var(--muted); overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
-.hist-item.active { background:rgba(124,92,252,0.13); color:var(--accent2); border-left:2px solid var(--accent); padding-left:calc(0.65rem - 2px); }
-.hist-dot { width:5px; height:5px; border-radius:50%; background:var(--dim); flex-shrink:0; }
-.hist-item.active .hist-dot { background:var(--accent); }
-
-.sb-foot { border-top:1px solid var(--border); padding-top:0.7rem; margin-top:1rem; display:flex; align-items:center; gap:0.5rem; }
-.u-av    { width:26px; height:26px; border-radius:50%; background:linear-gradient(135deg,var(--accent),var(--accent3)); display:flex; align-items:center; justify-content:center; font-size:0.62rem; font-weight:700; color:#fff; flex-shrink:0; }
-.u-name  { font-size:0.76rem; color:var(--muted); }
-.dev-chip { margin-left:auto; background:rgba(124,92,252,0.13); color:var(--accent2); border:1px solid rgba(124,92,252,0.27); border-radius:20px; padding:0.11rem 0.42rem; font-size:0.57rem; font-family:'Syne',sans-serif; font-weight:700; }
-
-.msg-row       { display:flex; gap:0.8rem; align-items:flex-start; margin-bottom:0.9rem; }
-.msg-row.user  { flex-direction:row-reverse; }
-.mav           { width:30px; height:30px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:0.78rem; flex-shrink:0; margin-top:2px; }
-.mav.ai        { background:linear-gradient(135deg,var(--accent),var(--accent2)); box-shadow:0 0 10px var(--glow); }
-.mav.user      { background:var(--surface2); border:1px solid var(--border); font-size:0.62rem; font-weight:700; color:var(--muted); }
-.mbubble       { max-width:88%; padding:0.8rem 1rem; border-radius:14px; font-size:0.875rem; line-height:1.75; color:var(--text); }
-.mbubble.ai    { background:var(--surface); border:1px solid var(--border); border-radius:4px 14px 14px 14px; }
-.mbubble.user  { background:linear-gradient(135deg,rgba(124,92,252,0.22),rgba(167,139,250,0.13)); border:1px solid rgba(124,92,252,0.22); border-radius:14px 4px 14px 14px; }
-
-.welcome { max-width:740px; margin:0 auto; text-align:center; padding:3rem 1.5rem 1.5rem; }
-.wc-icon  { width:62px; height:62px; background:linear-gradient(135deg,var(--accent),var(--accent2)); border-radius:18px; display:flex; align-items:center; justify-content:center; font-size:1.9rem; margin:0 auto 1.1rem; box-shadow:0 0 40px var(--glow); }
-.wc-title { font-family:'Syne',sans-serif; font-size:1.7rem; font-weight:800; background:linear-gradient(135deg,#f0f0ff,var(--accent2)); -webkit-background-clip:text; -webkit-text-fill-color:transparent; margin-bottom:0.5rem; }
-.wc-sub   { font-size:0.85rem; color:var(--muted); line-height:1.65; max-width:460px; margin:0 auto 1.5rem; }
-.chips    { display:flex; flex-wrap:wrap; gap:0.4rem; justify-content:center; }
-.chip     { padding:0.35rem 0.85rem; background:var(--surface); border:1px solid var(--border); border-radius:20px; font-size:0.73rem; color:var(--muted); }
-
-.a-card  { background:rgba(255,255,255,0.025); border:1px solid var(--border); border-radius:14px; padding:1.1rem 1.3rem; }
-.a-lbl   { font-family:'Syne',sans-serif; font-size:0.65rem; font-weight:700; letter-spacing:0.08em; color:var(--accent); text-transform:uppercase; margin-bottom:0.75rem; }
-.a-sub   { font-family:'Syne',sans-serif; font-size:0.63rem; font-weight:700; letter-spacing:0.07em; color:var(--accent); text-transform:uppercase; margin:0.75rem 0 0.5rem; }
-.stat-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:0.65rem; margin-bottom:0.9rem; }
-.stat-box  { background:rgba(255,255,255,0.03); border:1px solid var(--border); border-radius:11px; padding:0.75rem; text-align:center; }
-.stat-num  { font-family:'Syne',sans-serif; font-size:1.7rem; font-weight:800; color:var(--accent2); line-height:1; }
-.stat-lbl  { font-size:0.67rem; color:var(--muted); margin-top:0.25rem; }
-
-.bug-card  { background:rgba(255,255,255,0.025); border:1px solid var(--border); border-radius:13px; padding:1rem 1.1rem 1rem 1.2rem; position:relative; overflow:hidden; }
-.bug-card::before { content:''; position:absolute; left:0; top:0; bottom:0; width:3px; background:linear-gradient(180deg,var(--accent),var(--accent2)); }
-.bug-num   { font-family:'Syne',sans-serif; font-size:0.62rem; font-weight:700; letter-spacing:0.08em; color:var(--dim); text-transform:uppercase; margin-bottom:0.45rem; }
-.bug-text  { font-size:0.78rem; color:var(--muted); font-style:italic; margin-bottom:0.4rem; line-height:1.5; border-left:2px solid var(--dim); padding-left:0.6rem; }
-.badge-row { display:flex; gap:0.35rem; flex-wrap:wrap; }
-.badge     { padding:0.2rem 0.6rem; border-radius:20px; font-size:0.65rem; font-weight:700; font-family:'Syne',sans-serif; letter-spacing:0.04em; }
-.b-critical { background:rgba(248,113,113,0.1); color:#f87171; border:1px solid rgba(248,113,113,0.22); }
-.b-major    { background:rgba(251,146,60,0.1);  color:#fb923c; border:1px solid rgba(251,146,60,0.22); }
-.b-minor    { background:rgba(52,211,153,0.1);  color:#34d399; border:1px solid rgba(52,211,153,0.22); }
-.b-uncertain{ background:rgba(167,139,250,0.1); color:#a78bfa; border:1px solid rgba(167,139,250,0.22); }
-.b-type    { background:rgba(124,92,252,0.1);  color:var(--accent2); border:1px solid rgba(124,92,252,0.22); }
-.b-time    { background:rgba(56,189,248,0.1);  color:var(--accent3); border:1px solid rgba(56,189,248,0.22); }
-.narrative { font-size:0.855rem; color:var(--text); line-height:1.75; margin-top:0.65rem; }
-.sim-block { background:rgba(255,255,255,0.02); border-left:2px solid rgba(167,139,250,0.35); border-radius:0 7px 7px 0; padding:0.6rem 0.8rem; margin-top:0.65rem; font-size:0.77rem; color:var(--muted); }
-.sim-item  { font-family:'Syne',sans-serif; font-size:0.65rem; color:var(--dim); background:rgba(255,255,255,0.025); border-radius:5px; padding:0.25rem 0.42rem; margin-top:0.32rem; }
-.conf-wrap { margin-top:0.7rem; padding-top:0.6rem; border-top:1px solid var(--border); }
-.conf-lbl  { font-family:'Syne',sans-serif; font-size:0.62rem; font-weight:700; letter-spacing:0.07em; color:var(--accent); text-transform:uppercase; margin-bottom:0.4rem; }
-
-.step-line { display:flex; align-items:center; gap:0.45rem; font-size:0.8rem; color:var(--muted); }
-.pdot      { width:6px; height:6px; background:var(--accent); border-radius:50%; flex-shrink:0; animation:pulse 1.3s infinite; }
-@keyframes pulse { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:0.3;transform:scale(0.75)} }
-
-.ibar-outer { max-width:740px; margin:0.5rem auto 0; padding:0 0; }
-.ibar-wrap  { background:rgba(255,255,255,0.045); border:1px solid rgba(255,255,255,0.11); border-radius:14px; padding:0.4rem 0.5rem; display:flex; align-items:center; gap:0.35rem; }
-.ibar-wrap:focus-within { border-color:rgba(124,92,252,0.45); box-shadow:0 0 0 3px rgba(124,92,252,0.1); }
-
-div[data-testid="stTextArea"] textarea {
-    background:transparent !important; border:none !important;
-    color:var(--text) !important; font-family:'Epilogue',sans-serif !important;
-    font-size:0.87rem !important; resize:none !important;
-    outline:none !important; box-shadow:none !important;
-    padding:0.3rem 0.1rem !important; min-height:36px !important; line-height:1.5 !important;
+.app-header h1 {
+    font-family: 'Plus Jakarta Sans', sans-serif;
+    font-size: 2.4rem;
+    font-weight: 700;
+    color: var(--text);
+    margin: 0 0 0.5rem 0;
+    letter-spacing: -0.02em;
 }
-div[data-testid="stTextArea"] > div            { background:transparent !important; border:none !important; }
-div[data-testid="stTextArea"] > div > div      { background:transparent !important; }
+.app-header p {
+    font-size: 1rem;
+    color: var(--text-2);
+    margin: 0;
+}
 
+/* ── EXPANDERS ── */
+div[data-testid="stExpander"] {
+    background-color: var(--surface) !important;
+    border: 1px solid var(--border) !important;
+    border-radius: 12px !important;
+    box-shadow: var(--shadow-sm) !important;
+    overflow: hidden;
+}
+div[data-testid="stExpander"] summary {
+    background-color: transparent !important;
+    padding: 0.8rem 1rem !important;
+    font-weight: 600 !important;
+    color: var(--text) !important;
+}
+
+/* ── CHAT BUBBLES — Claude.ai layout ── */
+@keyframes fadeIn {
+    from { opacity: 0; transform: translateY(6px); }
+    to   { opacity: 1; transform: translateY(0); }
+}
+
+/* ── AI message row: avatar left + plain text, no bubble background ── */
+.msg-wrap {
+    animation: fadeIn 0.25s ease-out;
+    margin-bottom: 1.6rem;
+}
+.msg-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.75rem;
+}
+
+/* Avatar circle */
+.mav {
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.85rem;
+    font-weight: 700;
+    flex-shrink: 0;
+    margin-top: 2px;
+}
+.mav.ai {
+    background: var(--accent);
+    color: #fff;
+    box-shadow: 0 2px 8px rgba(108,71,255,0.25);
+}
+.mav.user {
+    background: var(--text);
+    color: #fff;
+    font-size: 0.6rem;
+    letter-spacing: 0.03em;
+}
+
+/* AI message body — no bubble, just prose flow like Claude */
+.mbubble.ai {
+    flex: 1;
+    font-size: 0.95rem;
+    line-height: 1.7;
+    color: var(--text);
+    padding-top: 4px;
+    word-break: break-word;
+}
+
+/* User bubble — right-aligned pill */
+.mbubble.user {
+    max-width: 82%;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 18px 18px 4px 18px;
+    padding: 0.75rem 1rem;
+    font-size: 0.95rem;
+    line-height: 1.6;
+    color: var(--text);
+    box-shadow: 0 1px 4px rgba(0,0,0,0.05);
+    word-break: break-word;
+}
+
+/* Step / processing line inside ai bubble */
+.step-line {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.85rem;
+    color: var(--text-2);
+    font-style: italic;
+}
+.pdot {
+    width: 7px; height: 7px;
+    border-radius: 50%;
+    background: var(--accent);
+    opacity: 0.6;
+    flex-shrink: 0;
+    animation: pulse 1.4s ease-in-out infinite;
+}
+@keyframes pulse {
+    0%,100% { opacity: 0.35; transform: scale(1); }
+    50%      { opacity: 1;    transform: scale(1.25); }
+}
+
+/* Legacy classes kept so nothing breaks */
+.chat-row { display: flex; margin-bottom: 1.5rem; }
+.chat-row.user { justify-content: flex-end; }
+.chat-row.ai   { justify-content: flex-start; }
+.bubble { max-width: 85%; padding: 1rem 1.2rem; border-radius: 16px; font-size: 0.95rem; line-height: 1.5; box-shadow: var(--shadow-sm); }
+.bubble.user { background: var(--surface); border: 1px solid var(--border); border-bottom-right-radius: 4px; }
+.bubble.ai   { background: var(--accent-soft); border: 1px solid rgba(108,71,255,0.1); border-bottom-left-radius: 4px; }
+.bubble-label { font-size: 0.7rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.4rem; opacity: 0.7; }
+.bubble.user .bubble-label { color: var(--text-2); text-align: right; }
+.bubble.ai   .bubble-label { color: var(--accent); }
+
+/* ── ANALYTICS CARDS ── */
+.analytics-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 1rem;
+    margin-bottom: 1.5rem;
+}
+.stat-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 1rem;
+    text-align: center;
+    box-shadow: var(--shadow-sm);
+}
+.stat-card .value {
+    font-size: 1.8rem;
+    font-weight: 700;
+    font-family: 'Plus Jakarta Sans', sans-serif;
+    color: var(--text);
+    line-height: 1.1;
+    margin-bottom: 0.2rem;
+}
+.stat-card .label {
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-3);
+    font-weight: 600;
+}
+
+/* ── TREND BARS ── */
+.trend-container {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 1rem 1.2rem;
+    margin-bottom: 1.5rem;
+    box-shadow: var(--shadow-sm);
+}
+.trend-title {
+    font-size: 0.8rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-2);
+    margin-bottom: 0.8rem;
+}
+.trend-row {
+    display: flex;
+    align-items: center;
+    margin-bottom: 0.5rem;
+    font-size: 0.85rem;
+}
+.trend-row:last-child { margin-bottom: 0; }
+.trend-label { width: 80px; font-weight: 500; color: var(--text); }
+.trend-bar-wrap {
+    flex: 1;
+    height: 6px;
+    background: var(--bg2);
+    border-radius: 3px;
+    margin: 0 0.8rem;
+    overflow: hidden;
+}
+.trend-bar { height: 100%; border-radius: 3px; }
+.trend-val { width: 30px; text-align: right; color: var(--text-2); font-size: 0.8rem; }
+
+/* ── TAGS ── */
+.tag {
+    display: inline-block;
+    padding: 0.15rem 0.5rem;
+    border-radius: 6px;
+    font-size: 0.75rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    margin-right: 0.4rem;
+}
+
+/* ── EXPORT BUTTONS ── */
+.export-panel {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 1rem;
+    margin-top: 1rem;
+    box-shadow: var(--shadow-sm);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+.export-title {
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--text);
+}
+
+/* ── FIXED BOTTOM INPUT BAR — stays at bottom, X locked to chat center ── */
+div[data-testid="stHorizontalBlock"]:has(.input-bar-hook) {
+    position: fixed !important;
+    bottom: 1.5rem !important;
+    left: 248px !important;
+    right: var(--canvas-width, 0px) !important;
+    margin: 0 auto !important;
+    width: auto !important;
+    min-width: 380px !important;
+    max-width: 760px !important;
+    background-color: var(--surface) !important;
+    border: 1.5px solid var(--border) !important;
+    border-radius: 24px !important;
+    padding: 6px 10px 6px 16px !important;
+    box-shadow: 0 4px 24px rgba(0,0,0,0.10), 0 1px 4px rgba(0,0,0,0.06) !important;
+    z-index: 9000 !important;
+    align-items: flex-end !important;
+    gap: 6px !important;
+    transition: left 0s, right 0s !important;
+}
+
+/* Focus glow — matches Claude.ai ring */
+div[data-testid="stHorizontalBlock"]:has(.input-bar-hook):focus-within {
+    border-color: var(--accent) !important;
+    box-shadow: 0 0 0 3px rgba(108,71,255,0.12), 0 4px 24px rgba(0,0,0,0.10) !important;
+}
+
+/* Columns pin to bottom so icons sit at bottom-right as text grows */
+div[data-testid="stHorizontalBlock"]:has(.input-bar-hook) div[data-testid="column"] {
+    display: flex !important;
+    align-items: flex-end !important;
+    justify-content: center !important;
+    padding-bottom: 4px !important;
+}
+
+/* Textarea wrapper */
+div[data-testid="stHorizontalBlock"]:has(.input-bar-hook) .stTextArea {
+    margin: 0 !important;
+    padding: 0 !important;
+    width: 100% !important;
+}
+
+/* The textarea itself — auto-grow, no chrome, Claude style */
+div[data-testid="stHorizontalBlock"]:has(.input-bar-hook) .stTextArea textarea {
+    background-color: transparent !important;
+    border: none !important;
+    box-shadow: none !important;
+    outline: none !important;
+    color: var(--text) !important;
+    caret-color: var(--accent) !important;
+    padding: 10px 4px 10px 0 !important;
+    min-height: 24px !important;
+    max-height: 200px !important;          /* Claude caps at ~200px then scrolls */
+    resize: none !important;
+    overflow-y: auto !important;
+    font-size: 0.95rem !important;
+    line-height: 1.6 !important;
+    font-family: 'Inter', sans-serif !important;
+    scrollbar-width: thin !important;
+}
+
+div[data-testid="stHorizontalBlock"]:has(.input-bar-hook) .stTextArea textarea::placeholder {
+    color: var(--text-3) !important;
+    font-size: 0.95rem !important;
+}
+
+/* Action buttons — round, flush to bottom-right like Claude */
+div[data-testid="stHorizontalBlock"]:has(.input-bar-hook) .stButton > button {
+    background-color: var(--accent) !important;
+    color: #ffffff !important;
+    border: none !important;
+    border-radius: 50% !important;          /* perfect circle like Claude send btn */
+    height: 36px !important;
+    width: 36px !important;
+    min-width: 36px !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    box-shadow: none !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    font-size: 1rem !important;
+    font-weight: 700 !important;
+    transition: background 0.15s ease, transform 0.1s ease !important;
+    flex-shrink: 0 !important;
+}
+
+div[data-testid="stHorizontalBlock"]:has(.input-bar-hook) .stButton > button:hover {
+    background-color: #5538e0 !important;
+    color: #ffffff !important;
+    transform: scale(1.06) !important;
+}
+
+div[data-testid="stHorizontalBlock"]:has(.input-bar-hook) .stButton > button:active {
+    transform: scale(0.96) !important;
+}
+
+/* File Uploader styling (above the input bar when active) */
 div[data-testid="stFileUploader"] {
-    background:rgba(124,92,252,0.06) !important;
-    border:1px dashed rgba(124,92,252,0.3) !important;
-    border-radius:10px !important; padding:0.5rem 0.75rem !important;
-    margin-bottom:0.4rem;
+    background: var(--accent-soft) !important;
+    border: 1px dashed rgba(108,71,255,0.35) !important;
+    border-radius: 10px !important;
+    padding: 0.5rem 0.8rem !important;
+    margin-bottom: 0.4rem;
 }
-
-.stDownloadButton > button {
-    background:linear-gradient(135deg,var(--accent),var(--accent2)) !important;
-    color:white !important; border:none !important; border-radius:9px !important;
-    font-family:'Syne',sans-serif !important; font-size:0.78rem !important;
-    font-weight:700 !important; padding:0.5rem 1.1rem !important;
-    letter-spacing:0.04em !important; box-shadow:0 0 14px var(--glow) !important;
-    cursor:pointer !important;
-}
-
-.stButton > button {
-    background:var(--surface) !important; color:var(--muted) !important;
-    border:1px solid var(--border) !important; border-radius:9px !important;
-    font-family:'Syne',sans-serif !important; font-size:0.77rem !important;
-    font-weight:600 !important; padding:0.45rem 1rem !important;
-    cursor:pointer !important; transition:all 0.15s !important;
-}
-.stButton > button:hover {
-    border-color:var(--accent) !important; color:var(--accent2) !important;
-    background:rgba(124,92,252,0.1) !important;
-}
-
-::-webkit-scrollbar       { width:4px; }
-::-webkit-scrollbar-track { background:transparent; }
-::-webkit-scrollbar-thumb { background:var(--border); border-radius:2px; }
 </style>
 """
-
 
 def inject_css():
     st.markdown(CSS, unsafe_allow_html=True)
@@ -186,99 +407,145 @@ def inject_css():
 
 def render_header():
     st.markdown(f"""
-    <div class="chat-hdr">
-        <div class="chat-hdr-title">{APP_ICON} {APP_TITLE}</div>
-        <div class="chat-hdr-sub">
-            Semantic deduplication · Multi-task BERT classification ·
-            Temperature T={TEMPERATURE} · Confidence ≥{int(CONF_THRESHOLD*100)}% · v{APP_VERSION}
+    <div style="display:flex;align-items:center;gap:1rem;
+                padding-bottom:1.2rem;margin-bottom:1.5rem;
+                border-bottom:1px solid #e8e6df;
+                margin-top:2rem;"> <div style="width:44px;height:44px;background:#6c47ff;border-radius:12px;
+                    display:flex;align-items:center;justify-content:center;
+                    font-size:1.4rem;color:white;
+                    box-shadow:0 4px 12px rgba(108,71,255,0.25);flex-shrink:0;">
+            {APP_ICON}
+        </div>
+        <div>
+            <div style="font-family:'Plus Jakarta Sans','Inter',sans-serif;
+                        font-size:1.15rem;font-weight:700;color:#1c1b20;line-height:1.1;">
+                {APP_TITLE}
+            </div>
+            <div style="font-size:0.72rem;color:#9896a8;font-weight:500;margin-top:2px;">
+                Semantic dedup · Multi-task BERT · v{APP_VERSION}
+            </div>
         </div>
     </div>""", unsafe_allow_html=True)
 
-
 def render_sidebar():
     with st.sidebar:
-        st.markdown(f"""
-        <div style="padding:1rem 0.7rem 0;">
-            <div class="sb-logo">
-                <div class="sb-icon">{APP_ICON}</div>
-                <div>
-                    <div class="sb-name">{APP_TITLE}</div>
-                    <div class="sb-sub">NLP Triage Pipeline · v{APP_VERSION}</div>
-                </div>
-            </div>
-        </div>""", unsafe_allow_html=True)
-
-        st.markdown('<div style="padding:0 0.7rem;">', unsafe_allow_html=True)
+        st.markdown(f"### {APP_ICON} {APP_TITLE}")
+        st.caption(f"NLP Triage Pipeline · v{APP_VERSION} · {DEVICE.upper()}")
+        st.divider()
 
         if st.button("＋  New analysis", key="new_chat_btn", use_container_width=True):
-            for k in ["results", "pdf_bytes", "bugs", "dup_map",
-                      "show_upload", "processing", "pending_text",
-                      "pending_file", "user_label", "session_id"]:
-                st.session_state[k] = None if k not in [
-                    "show_upload", "processing"] else False
-            st.session_state.total_bugs = 0
-            st.session_state.dup_count  = 0
+            for k in ["results", "pdf_bytes", "bugs", "dup_map", "pending_text",
+                      "pending_file", "user_label", "session_id",
+                      "solutions_data", "general_answer"]:
+                st.session_state[k] = None
+            st.session_state.show_upload    = False
+            st.session_state.processing     = False
+            st.session_state.show_solutions = False
+            st.session_state.total_bugs     = 0
+            st.session_state.dup_count      = 0
             st.rerun()
 
-        st.markdown('<div class="sb-sec">Recent Sessions</div>', unsafe_allow_html=True)
+        st.markdown("**Recent Sessions**")
 
         sessions = list_sessions()
-        current  = st.session_state.get("session_id", "")
+
         if sessions:
-            for s in sessions[:8]:
-                active = "active" if s["id"] == current else ""
-                st.markdown(
-                    f'<div class="hist-item {active}">'
-                    f'<div class="hist-dot"></div>'
-                    f'{s["label"][:26]}{"..." if len(s["label"])>26 else ""}'
-                    f'</div>',
-                    unsafe_allow_html=True
-                )
-            if st.button("Clear history", key="clear_hist"):
+            for i, s in enumerate(sessions[:15]):
+                label   = s["label"]
+                ts      = s["timestamp"][:10]
+                caption = f'{s["total"]} bugs · {s["dups"]} dups · {ts}'
+                if st.button(
+                    label[:36] + ("…" if len(label) > 36 else ""),
+                    key=f'sess_{i}_{s["id"]}',
+                    use_container_width=True,
+                    help=caption,
+                ):
+                    loaded = load_session(s["id"])
+                    if loaded:
+                        st.session_state.results    = loaded["results"]
+                        st.session_state.bugs       = loaded["bugs"]
+                        st.session_state.dup_map    = {
+                            r["original_index"]: r.get("duplicates", [])
+                            for r in loaded["results"]
+                        }
+                        st.session_state.total_bugs = loaded["total_bugs"]
+                        st.session_state.dup_count  = loaded["dup_count"]
+                        st.session_state.session_id = loaded["id"]
+                        st.session_state.user_label = loaded["label"]
+                        st.session_state.pdf_bytes  = None
+                        st.session_state.show_solutions = False
+                        st.session_state.solutions_data = None
+                        st.rerun()
+
+            st.divider()
+            if st.button("🗑 Clear all sessions", key="clear_hist", use_container_width=True):
                 clear_all_sessions()
                 st.rerun()
         else:
-            st.markdown(
-                '<div style="font-size:0.73rem;color:#44446a;padding:0.4rem;">No sessions yet</div>',
-                unsafe_allow_html=True
-            )
+            st.caption("No sessions yet. Run your first analysis to see it here.")
 
-        st.markdown('</div>', unsafe_allow_html=True)
-
-        st.markdown(f"""
-        <div style="padding:0 0.7rem;">
-            <div class="sb-foot">
-                <div class="u-av">VK</div>
-                <div class="u-name">Varad Kulkarni</div>
-                <div class="dev-chip">{DEVICE.upper()}</div>
-            </div>
-        </div>""", unsafe_allow_html=True)
+        st.divider()
+        st.caption(f"👤 Varad Kulkarni · {DEVICE.upper()}")
 
 
 def render_welcome():
     st.markdown("""
-    <div class="welcome">
-        <div class="wc-icon">🐛</div>
-        <div class="wc-title">What are you working on?</div>
-        <div class="wc-sub">
-            Upload a PDF bug report or paste bug descriptions below.<br>
-            I'll deduplicate, classify by type, severity &amp; fix time,
-            and generate a full triage report.
+    <div style="text-align:center;padding:3rem 1rem 2rem;animation:fadeIn 0.6s ease-out;">
+        <div style="display:inline-block;background:#ede9ff;color:#6c47ff;
+                    padding:0.3rem 0.8rem;border-radius:20px;font-size:0.75rem;
+                    font-weight:700;letter-spacing:0.05em;margin-bottom:1.5rem;">
+            🐛 AI Bug Triage
         </div>
-        <div class="chips">
-            <div class="chip">📄 PDF upload</div>
-            <div class="chip">✏️ Paste text</div>
-            <div class="chip">🔍 SBERT dedup · 82% threshold</div>
-            <div class="chip">⚡ Crash · Memory · UI · Freeze</div>
-            <div class="chip">📊 PDF · CSV · XLSX export</div>
-            <div class="chip">💡 AI solution suggestions</div>
+        <div style="font-family:'Plus Jakarta Sans','Inter',sans-serif;
+                    font-size:3rem;font-weight:800;color:#1c1b20;
+                    line-height:1.1;letter-spacing:-0.03em;margin-bottom:1rem;">
+            Classify bugs.<br>Ship faster.
+        </div>
+        <div style="font-size:1rem;color:#6b6880;max-width:480px;
+                    margin:0 auto 2.5rem;line-height:1.6;">
+            Paste bug descriptions or upload a PDF report.
+            The pipeline deduplicates, classifies by type &amp; severity,
+            and generates a structured triage report.
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(3,1fr);
+                    gap:1.2rem;max-width:680px;margin:0 auto;">
+            <div style="background:#fff;border:1px solid #e8e6df;border-radius:16px;
+                        padding:1.5rem 1.2rem;text-align:left;
+                        box-shadow:0 2px 8px rgba(0,0,0,0.04);">
+                <div style="font-size:1.5rem;margin-bottom:0.8rem;">🔍</div>
+                <div style="font-size:0.9rem;font-weight:600;color:#1c1b20;
+                            margin-bottom:0.4rem;">Smart Deduplication</div>
+                <div style="font-size:0.8rem;color:#9896a8;line-height:1.4;">
+                    SBERT semantic similarity removes duplicate reports automatically.
+                </div>
+            </div>
+            <div style="background:#fff;border:1px solid #e8e6df;border-radius:16px;
+                        padding:1.5rem 1.2rem;text-align:left;
+                        box-shadow:0 2px 8px rgba(0,0,0,0.04);">
+                <div style="font-size:1.5rem;margin-bottom:0.8rem;">⚡</div>
+                <div style="font-size:0.9rem;font-weight:600;color:#1c1b20;
+                            margin-bottom:0.4rem;">Multi-task Classification</div>
+                <div style="font-size:0.8rem;color:#9896a8;line-height:1.4;">
+                    BERT classifies bug type, severity, and fix time in one pass.
+                </div>
+            </div>
+            <div style="background:#fff;border:1px solid #e8e6df;border-radius:16px;
+                        padding:1.5rem 1.2rem;text-align:left;
+                        box-shadow:0 2px 8px rgba(0,0,0,0.04);">
+                <div style="font-size:1.5rem;margin-bottom:0.8rem;">💡</div>
+                <div style="font-size:0.9rem;font-weight:600;color:#1c1b20;
+                            margin-bottom:0.4rem;">AI Solutions</div>
+                <div style="font-size:0.8rem;color:#9896a8;line-height:1.4;">
+                    Searches Stack Overflow and GitHub for relevant fixes.
+                </div>
+            </div>
         </div>
     </div>""", unsafe_allow_html=True)
 
 
 def ai_bubble(html: str):
     st.markdown(f"""
-    <div class="chat-col">
+    <div class="msg-wrap">
         <div class="msg-row">
             <div class="mav ai">🐛</div>
             <div class="mbubble ai">{html}</div>
@@ -287,11 +554,36 @@ def ai_bubble(html: str):
 
 
 def user_bubble(text: str):
+    if len(text) > 200:
+        preview  = text[:200].rsplit(" ", 1)[0] + "…"
+        full_esc = text.replace('"', '&quot;').replace("'", "&#39;")
+        content  = f"""
+        <div>
+            <div style="white-space:pre-wrap;word-break:break-word;
+                        font-size:0.95rem;line-height:1.6;color:#1c1b20;">
+                {preview}
+            </div>
+            <details style="margin-top:0.5rem;">
+                <summary style="font-size:0.75rem;color:#6c47ff;cursor:pointer;
+                                font-weight:600;list-style:none;outline:none;">
+                    ▼ Show full input ({len(text)} chars)
+                </summary>
+                <div style="margin-top:0.6rem;white-space:pre-wrap;word-break:break-word;
+                            font-size:0.88rem;line-height:1.65;color:#1c1b20;
+                            background:#f8f7f4;border-radius:8px;padding:0.7rem 0.85rem;
+                            border-left:3px solid #6c47ff;">
+                    {text}
+                </div>
+            </details>
+        </div>"""
+    else:
+        content = f'<div style="white-space:pre-wrap;word-break:break-word;">{text}</div>'
+
     st.markdown(f"""
-    <div class="chat-col">
-        <div class="msg-row user">
-            <div class="mav user">VK</div>
-            <div class="mbubble user">{text}</div>
+    <div class="msg-wrap" style="display:flex;justify-content:flex-end;margin-bottom:1.2rem;">
+        <div style="display:flex;align-items:flex-end;gap:0.6rem;max-width:82%;">
+            <div class="mbubble user">{content}</div>
+            <div class="mav user" style="flex-shrink:0;margin-bottom:2px;">VK</div>
         </div>
     </div>""", unsafe_allow_html=True)
 
@@ -302,250 +594,576 @@ def step_bubble(message: str):
 
 def render_analytics(results: list[dict], total: int, dup_count: int):
     analytics  = compute_session_analytics(results, total, dup_count)
-    sev_colors = SEVERITY_COLORS
+    unique     = analytics["unique"]
+    type_cnt   = analytics["type_counts"]
+    sev_cnt    = analytics["sev_counts"]
+
+    # ── Derive insights ────────────────────────────────────────────────────────
+    critical_n  = sev_cnt.get("critical", 0)
+    major_n     = sev_cnt.get("major",    0)
+    most_type   = max(type_cnt, key=type_cnt.get) if type_cnt else "—"
+    most_type_n = type_cnt.get(most_type, 0)
+    urgent      = critical_n + major_n  # bugs needing immediate attention
+
     type_colors = {
-        "Crash":     "#f87171",
-        "Freeze":    "#38bdf8",
-        "Memory":    "#fb923c",
-        "UI/Visual": "#a78bfa",
-        "Other":     "#7878a8",
-        "Uncertain": "#44446a",
+        "Crash":     "#dc2626",
+        "Freeze":    "#2563eb",
+        "Memory":    "#ea580c",
+        "UI/Visual": "#7c3aed",
+        "Other":     "#6b7280",
+    }
+    sev_colors = {
+        "critical": "#dc2626",
+        "major":    "#ea580c",
+        "minor":    "#16a34a",
     }
 
-    type_bars = trend_bars_html(analytics["type_counts"], analytics["unique"], type_colors)
-    sev_bars  = trend_bars_html(analytics["sev_counts"],  analytics["unique"], sev_colors)
+    def bar_rows(counts, total_c, colors):
+        if not total_c:
+            return ""
+        rows = ""
+        for label, cnt in sorted(counts.items(), key=lambda x: -x[1]):
+            pct   = round(cnt / total_c * 100)
+            color = colors.get(label, "#6b7280")
+            rows += (
+                f'<div style="margin-bottom:0.55rem;">'
+                f'<div style="display:flex;justify-content:space-between;'
+                f'font-size:0.75rem;font-weight:500;margin-bottom:0.22rem;">'
+                f'<span style="color:#1c1b20;">{label}</span>'
+                f'<span style="color:#9896a8;">{cnt} · {pct}%</span></div>'
+                f'<div style="background:#f0efe9;border-radius:4px;height:7px;overflow:hidden;">'
+                f'<div style="width:{pct}%;height:100%;border-radius:4px;background:{color};"></div>'
+                f'</div></div>'
+            )
+        return rows
 
-    avg_conf = round(
-        (analytics["avg_bt_conf"] + analytics["avg_sv_conf"] + analytics["avg_ft_conf"]) / 3, 1
-    )
+    type_bars = bar_rows(type_cnt, unique, type_colors)
+    sev_bars  = bar_rows(sev_cnt,  unique, sev_colors)
 
-    ai_bubble(f"""
-    <div class="a-card">
-        <div class="a-lbl">Analytics Overview</div>
-        <div class="stat-grid">
-            <div class="stat-box">
-                <div class="stat-num">{total}</div>
-                <div class="stat-lbl">Total Bugs</div>
+    # ── Insight chips ──────────────────────────────────────────────────────────
+    chips = ""
+    if critical_n:
+        chips += f'<span style="background:#fee2e2;color:#dc2626;padding:0.22rem 0.65rem;border-radius:20px;font-size:0.72rem;font-weight:600;margin-right:0.4rem;">🔴 {critical_n} critical</span>'
+    if major_n:
+        chips += f'<span style="background:#ffedd5;color:#ea580c;padding:0.22rem 0.65rem;border-radius:20px;font-size:0.72rem;font-weight:600;margin-right:0.4rem;">🟠 {major_n} major</span>'
+    if urgent:
+        chips += f'<span style="background:#ede9ff;color:#6c47ff;padding:0.22rem 0.65rem;border-radius:20px;font-size:0.72rem;font-weight:600;margin-right:0.4rem;">⚡ {urgent} need urgent fix</span>'
+    if most_type_n:
+        chips += f'<span style="background:#f0efe9;color:#6b6880;padding:0.22rem 0.65rem;border-radius:20px;font-size:0.72rem;font-weight:600;">📌 Most: {most_type}</span>'
+
+    chips_html = f'<div style="margin-bottom:0.85rem;display:flex;flex-wrap:wrap;gap:0.3rem;">{chips}</div>' if chips else ""
+
+    st.markdown(f"""
+    <div style="display:flex;gap:0.75rem;align-items:flex-start;margin-bottom:1.5rem;">
+        <div style="width:32px;height:32px;border-radius:50%;background:#6c47ff;
+                    display:flex;align-items:center;justify-content:center;
+                    font-size:0.85rem;flex-shrink:0;margin-top:2px;color:#fff;">🐛</div>
+        <div style="flex:1;min-width:0;">
+            <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:0.6rem;margin-bottom:1rem;">
+                <div style="background:#ffffff;border:1px solid #e8e6df;border-radius:12px;
+                            padding:0.85rem 0.9rem;box-shadow:0 1px 3px rgba(0,0,0,0.05);text-align:center;">
+                    <div style="font-size:1.9rem;font-weight:700;color:#1c1b20;line-height:1;">{total}</div>
+                    <div style="font-size:0.65rem;text-transform:uppercase;letter-spacing:0.06em;
+                                color:#9896a8;font-weight:600;margin-top:0.2rem;">Total</div>
+                </div>
+                <div style="background:#ffffff;border:1px solid #e8e6df;border-radius:12px;
+                            padding:0.85rem 0.9rem;box-shadow:0 1px 3px rgba(0,0,0,0.05);text-align:center;">
+                    <div style="font-size:1.9rem;font-weight:700;color:#dc2626;line-height:1;">{dup_count}</div>
+                    <div style="font-size:0.65rem;text-transform:uppercase;letter-spacing:0.06em;
+                                color:#9896a8;font-weight:600;margin-top:0.2rem;">Duplicates</div>
+                </div>
+                <div style="background:#ffffff;border:1px solid #e8e6df;border-radius:12px;
+                            padding:0.85rem 0.9rem;box-shadow:0 1px 3px rgba(0,0,0,0.05);text-align:center;">
+                    <div style="font-size:1.9rem;font-weight:700;color:#16a34a;line-height:1;">{unique}</div>
+                    <div style="font-size:0.65rem;text-transform:uppercase;letter-spacing:0.06em;
+                                color:#9896a8;font-weight:600;margin-top:0.2rem;">Unique</div>
+                </div>
+                <div style="background:#dc2626;border:1px solid #dc2626;border-radius:12px;
+                            padding:0.85rem 0.9rem;box-shadow:0 1px 3px rgba(220,38,38,0.25);text-align:center;">
+                    <div style="font-size:1.9rem;font-weight:700;color:#fff;line-height:1;">{urgent}</div>
+                    <div style="font-size:0.65rem;text-transform:uppercase;letter-spacing:0.06em;
+                                color:rgba(255,255,255,0.8);font-weight:600;margin-top:0.2rem;">Urgent</div>
+                </div>
             </div>
-            <div class="stat-box">
-                <div class="stat-num" style="color:#f87171">{dup_count}</div>
-                <div class="stat-lbl">Duplicates</div>
-            </div>
-            <div class="stat-box">
-                <div class="stat-num" style="color:#34d399">{analytics['unique']}</div>
-                <div class="stat-lbl">Unique</div>
+            {chips_html}
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:0.75rem;">
+                <div style="background:#ffffff;border:1px solid #e8e6df;border-radius:12px;
+                            padding:0.9rem 1rem;box-shadow:0 1px 3px rgba(0,0,0,0.05);">
+                    <div style="font-size:0.68rem;font-weight:700;text-transform:uppercase;
+                                letter-spacing:0.08em;color:#9896a8;margin-bottom:0.75rem;">Bug type trend</div>
+                    {type_bars if type_bars else '<div style="font-size:0.8rem;color:#9896a8;">No data</div>'}
+                </div>
+                <div style="background:#ffffff;border:1px solid #e8e6df;border-radius:12px;
+                            padding:0.9rem 1rem;box-shadow:0 1px 3px rgba(0,0,0,0.05);">
+                    <div style="font-size:0.68rem;font-weight:700;text-transform:uppercase;
+                                letter-spacing:0.08em;color:#9896a8;margin-bottom:0.75rem;">Severity breakdown</div>
+                    {sev_bars if sev_bars else '<div style="font-size:0.8rem;color:#9896a8;">No data</div>'}
+                </div>
             </div>
         </div>
-        <div class="stat-grid" style="margin-top:0;">
-            <div class="stat-box">
-                <div class="stat-num" style="font-size:1.2rem;color:#fb923c">{analytics['dup_rate']}%</div>
-                <div class="stat-lbl">Dup Rate</div>
-            </div>
-            <div class="stat-box">
-                <div class="stat-num" style="font-size:1.2rem;color:#a78bfa">{analytics['uncertain']}</div>
-                <div class="stat-lbl">Uncertain</div>
-            </div>
-            <div class="stat-box">
-                <div class="stat-num" style="font-size:1.2rem;color:#38bdf8">{avg_conf}%</div>
-                <div class="stat-lbl">Avg Conf</div>
-            </div>
-        </div>
-        <div class="a-sub">Bug Type Trend</div>
-        {type_bars}
-        <div class="a-sub">Severity Distribution</div>
-        {sev_bars}
-    </div>""")
+    </div>""", unsafe_allow_html=True)
 
 
-def _sev_badge_class(severity: str) -> str:
+def _sev_cls(severity: str) -> str:
     return {
-        "critical":  "b-critical",
-        "major":     "b-major",
-        "minor":     "b-minor",
-        "uncertain": "b-uncertain",
-    }.get(severity.lower(), "b-uncertain")
+        "critical": "b-critical",
+        "major":    "b-major",
+        "minor":    "b-minor",
+    }.get(severity.lower(), "b-major")
 
 
-def _conf_bars_html(r: dict) -> str:
-    def bar(label, val, color):
-        opacity = "1" if val >= CONF_THRESHOLD * 100 else "0.4"
-        return (
-            f'<div style="margin-bottom:0.28rem;">'
-            f'<div style="display:flex;justify-content:space-between;'
-            f'font-size:0.64rem;color:var(--muted);margin-bottom:0.14rem;">'
-            f'<span>{label}</span><span>{val}%</span></div>'
-            f'<div style="background:rgba(255,255,255,0.05);border-radius:3px;height:4px;overflow:hidden;">'
-            f'<div style="width:{min(val,100)}%;height:100%;border-radius:3px;'
-            f'background:{color};opacity:{opacity};"></div>'
-            f'</div></div>'
-        )
-    return (
-        '<div class="conf-wrap">'
-        f'<div class="conf-lbl">Confidence · T={TEMPERATURE}</div>'
-        + bar("Bug Type", r.get("bt_conf", 0), "#a78bfa")
-        + bar("Severity", r.get("sv_conf", 0), "#f87171")
-        + bar("Fix Time", r.get("ft_conf", 0), "#38bdf8")
-        + '</div>'
-    )
-
-
-def _uncertain_banner(r: dict) -> str:
-    if not r.get("is_uncertain"):
-        return ""
-    bt = r.get("bt_candidates", [])
-    sv = r.get("sv_candidates", [])
-    ft = r.get("ft_candidates", [])
-    lines = []
-    if r["bug_type"] == "Uncertain" and len(bt) >= 2:
-        lines.append(f'Type: {bt[0][0]} ({bt[0][1]}%) or {bt[1][0]} ({bt[1][1]}%)')
-    if r["severity"] == "uncertain" and len(sv) >= 2:
-        lines.append(f'Severity: {sv[0][0]} ({sv[0][1]}%) or {sv[1][0]} ({sv[1][1]}%)')
-    if r["fix_time"] == "uncertain" and len(ft) >= 2:
-        lines.append(f'Fix Time: {ft[0][0]} ({ft[0][1]}%) or {ft[1][0]} ({ft[1][1]}%)')
-    body = "<br>".join(f'<span style="color:#e8e8f0;">{l}</span>' for l in lines)
-    return (
-        '<div style="background:rgba(251,146,60,0.1);border:1px solid rgba(251,146,60,0.25);'
-        'border-radius:8px;padding:0.5rem 0.75rem;margin:0.5rem 0;font-size:0.74rem;color:#fb923c;">'
-        f'⚠️ <strong>Low confidence</strong> — below {int(CONF_THRESHOLD*100)}% threshold<br>{body}'
-        '</div>'
-    )
-
-
-def _similar_html(r: dict, bugs: list[str], dup_map: dict) -> str:
+def _sim_html(r: dict, bugs: list[str], dup_map: dict) -> str:
     dl = dup_map.get(r["original_index"], [])
     if not dl:
         return ""
     items = "".join(
-        f'<div class="sim-item">"{bugs[d][:100]}{"..." if len(bugs[d])>100 else ""}"</div>'
+        f'<div class="sim-item">"{bugs[d][:110]}{"…" if len(bugs[d])>110 else ""}"</div>'
         for d in dl
     )
-    return (
-        '<div class="sim-block">'
-        'We also found similar bugs with the same outcome — they will take a similar timeline or fix time:'
-        f'{items}</div>'
-    )
+    return f"""
+    <div class="sim-block">
+        <div class="sim-title">Similar bugs found</div>
+        {items}
+    </div>"""
 
 
-def render_bug_card(r: dict, idx: int, bugs: list[str], dup_map: dict, show_solution_btn: bool = True):
-    bug_text   = r.get("text", "")
-    text_html  = (
-        f'<div class="bug-text">"{bug_text[:200]}{"..." if len(bug_text)>200 else ""}"</div>'
+def render_bug_card(r: dict, idx: int, bugs: list[str], dup_map: dict, show_solution_btn: bool = False):
+    bug_text  = r.get("text", "")
+    text_html = (
+        f'<div class="bug-text">"{bug_text[:220]}{"…" if len(bug_text)>220 else ""}"</div>'
         if bug_text else ""
     )
-    sev_cls    = _sev_badge_class(r["severity"])
-    uncertain  = _uncertain_banner(r)
-    conf_html  = _conf_bars_html(r)
-    sim_html   = _similar_html(r, bugs, dup_map)
+    sev  = _sev_cls(r["severity"])
+    sims = _sim_html(r, bugs, dup_map)
 
     ai_bubble(f"""
     <div class="bug-card">
-        <div class="bug-num">Bug #{idx+1}</div>
+        <div class="bug-card-header">
+            <div class="bug-num">Bug #{idx+1}</div>
+        </div>
         {text_html}
-        {uncertain}
-        <div class="badge-row" style="margin-top:0.5rem;">
-            <span class="badge {sev_cls}">{r['severity'].upper()}</span>
+        <div class="badge-row">
+            <span class="badge {sev}">{r['severity'].upper()}</span>
             <span class="badge b-type">{r['bug_type']}</span>
             <span class="badge b-time">⏱ {r['fix_time']}</span>
         </div>
         <div class="narrative">
             As per the analyzed report, the severity of the current running bug is
             <strong>{r['severity']}</strong>. With the current severity, we found out
-            that the bug is a <strong>{r['bug_type']}</strong> issue. With this bug
-            running in the back, I would find out that the fix time on the basis of
-            the severity is <strong>{r['fix_time']}</strong>.
+            that the bug is a <strong>{r['bug_type']}</strong> issue.
+            The estimated fix time on the basis of the severity is
+            <strong>{r['fix_time']}</strong>.
         </div>
-        {conf_html}
-        {sim_html}
+        {sims}
     </div>""")
 
-    if show_solution_btn:
-        col_gap, col_btn = st.columns([11, 3])
-        with col_btn:
-            if st.button(
-                "💡 Get Solution",
-                key=f"sol_btn_{idx}_{r['original_index']}",
-                help="AI-powered solution suggestion for this bug"
-            ):
-                st.session_state[f"show_solution_{idx}"] = True
-                st.session_state[f"solution_bug_{idx}"]  = r.get("text", "")
-                st.session_state[f"solution_type_{idx}"] = r.get("bug_type", "")
-                st.rerun()
+def render_canvas(results: list, bugs: list, dup_map: dict,
+                  pdf_bytes: bytes, session_label: str = "Bug Report"):
+    """Claude-style right panel: Breaks out of the iframe, anchors right, drag-to-resize."""
+    import streamlit.components.v1 as components
+    from app.helpers.exporter import export_csv, export_xlsx
 
+    if "canvas_width_px" not in st.session_state:
+        st.session_state.canvas_width_px = 480
 
-def render_export_buttons(pdf_bytes: bytes, results: list, bugs: list, dup_map: dict):
-    from app.helpers.exporter import export_csv, export_xlsx, export_json
+    w = st.session_state.canvas_width_px
 
-    ai_bubble("✅ Report complete. Download in your preferred format:")
+    sev_style = {
+        "critical": ("#dc2626", "#fee2e2"),
+        "major":    ("#ea580c", "#ffedd5"),
+        "minor":    ("#16a34a", "#dcfce7"),
+    }
 
-    st.markdown('<div class="chat-col">', unsafe_allow_html=True)
-    c1, c2, c3, c4, c5 = st.columns([2, 2, 2, 2, 3])
-
-    with c1:
-        st.download_button(
-            "⬇ PDF", data=pdf_bytes,
-            file_name="nlp_bug_report.pdf",
-            mime="application/pdf"
-        )
-    with c2:
-        st.download_button(
-            "⬇ CSV", data=export_csv(results, bugs, dup_map),
-            file_name="nlp_bug_report.csv",
-            mime="text/csv"
-        )
-    with c3:
-        try:
-            xlsx_bytes = export_xlsx(results, bugs, dup_map)
-            st.download_button(
-                "⬇ XLSX", data=xlsx_bytes,
-                file_name="nlp_bug_report.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    # ── Build cards HTML ──────────────────────────────────────────────────────
+    cards_html = ""
+    for i, r in enumerate(results):
+        sc, sb   = sev_style.get(r["severity"].lower(), ("#6b6880", "#f3f4f6"))
+        bug_text = r.get("text", "")
+        dl       = dup_map.get(r["original_index"], [])
+        sim_block = ""
+        if dl:
+            sim_items = "".join(
+                f'<div style="font-size:0.75rem;color:#6b6880;padding:0.28rem 0;'
+                f'border-bottom:1px solid #f0efe9;">'
+                f'&ldquo;{bugs[d][:100]}{"…" if len(bugs[d])>100 else ""}&rdquo;</div>'
+                for d in dl
             )
-        except ImportError:
-            st.caption("XLSX needs openpyxl")
-    with c4:
-        st.download_button(
-            "⬇ JSON", data=export_json(results, bugs, dup_map),
-            file_name="nlp_bug_report.json",
-            mime="application/json"
+            sim_block = (
+                f'<div style="background:#f8f7f4;border-radius:7px;padding:0.55rem 0.7rem;'
+                f'margin-top:0.65rem;border-left:3px solid #6c47ff;">'
+                f'<div style="font-size:0.6rem;font-weight:600;text-transform:uppercase;'
+                f'color:#9896a8;margin-bottom:0.3rem;">Similar bugs</div>'
+                f'{sim_items}</div>'
+            )
+        bug_esc = bug_text.replace("<","&lt;").replace(">","&gt;").replace('"','&quot;')
+        cards_html += (
+            f'<div style="background:#fff;border:1px solid #e8e6df;border-radius:12px;'
+            f'padding:1rem 1.1rem;margin-bottom:0.75rem;border-left:3px solid {sc};'
+            f'box-shadow:0 1px 4px rgba(0,0,0,0.04);">'
+            f'<div style="font-size:0.6rem;font-weight:700;text-transform:uppercase;'
+            f'letter-spacing:0.07em;color:#9896a8;margin-bottom:0.4rem;">Bug #{i+1}</div>'
+            f'<div style="font-size:0.84rem;color:#1c1b20;background:#f8f7f4;'
+            f'border-radius:6px;padding:0.6rem 0.8rem;margin-bottom:0.6rem;'
+            f'line-height:1.6;white-space:pre-wrap;">&ldquo;{bug_esc}&rdquo;</div>'
+            f'<div style="margin-bottom:0.6rem;">'
+            f'<span style="padding:0.18rem 0.55rem;border-radius:5px;font-size:0.67rem;'
+            f'font-weight:600;background:{sb};color:{sc};margin-right:0.3rem;">{r["severity"].upper()}</span>'
+            f'<span style="padding:0.18rem 0.55rem;border-radius:5px;font-size:0.67rem;'
+            f'font-weight:600;background:#f0efe9;color:#6b6880;border:1px solid #e8e6df;'
+            f'margin-right:0.3rem;">{r["bug_type"]}</span>'
+            f'<span style="padding:0.18rem 0.55rem;border-radius:5px;font-size:0.67rem;'
+            f'font-weight:600;background:#ede9ff;color:#6c47ff;">⏱ {r["fix_time"]}</span>'
+            f'</div>'
+            f'<div style="font-size:0.82rem;color:#6b6880;line-height:1.65;'
+            f'padding-top:0.6rem;border-top:1px solid #f0efe9;">'
+            f'Severity: <strong style="color:#1c1b20;">{r["severity"]}</strong> · '
+            f'Type: <strong style="color:#1c1b20;">{r["bug_type"]}</strong> · '
+            f'Fix time: <strong style="color:#1c1b20;">{r["fix_time"]}</strong>'
+            f'</div>{sim_block}</div>'
         )
-    with c5:
-        if st.button("🔄 New analysis", key="reset_btn"):
-            for k in ["results", "pdf_bytes", "bugs", "dup_map",
-                      "show_upload", "processing", "pending_text",
-                      "pending_file", "user_label"]:
-                st.session_state[k] = None if k not in [
-                    "show_upload", "processing"] else False
-            st.session_state.total_bugs = 0
-            st.session_state.dup_count  = 0
-            st.rerun()
 
-    st.markdown('</div>', unsafe_allow_html=True)
+    # ── Prepare download data as base64 for inline links ─────────────────────
+    # ── Prepare download data as base64 for inline links ─────────────────────
+    import base64
+    # FIX: Ensure pdf_bytes doesn't cause a NoneType crash!
+    safe_pdf = pdf_bytes if pdf_bytes else b""
+    pdf_b64  = base64.b64encode(safe_pdf).decode()
+    csv_data = export_csv(results, bugs, dup_map)
+    csv_b64  = base64.b64encode(csv_data if isinstance(csv_data, bytes) else csv_data.encode()).decode()
+    try:
+        xlsx_data = export_xlsx(results, bugs, dup_map)
+        xlsx_b64  = base64.b64encode(xlsx_data).decode()
+        # Changed to octet-stream to force download in sandboxed iframe
+        xlsx_btn  = f'<a class="dl-btn" href="data:application/octet-stream;base64,{xlsx_b64}" download="bug_report.xlsx">📗 XLSX</a>'
+    except Exception:
+        xlsx_btn = ""
+
+    # ── Inject CSS variable so input bar and block-container auto-adjust ────
+   # ── Inject CSS variable so input bar and block-container auto-adjust ────
+    st.markdown(f"""
+    <style>
+    :root {{
+        --canvas-width: {w}px;
+    }}
+    </style>
+    """, unsafe_allow_html=True)
+
+    # ── Build solutions HTML to embed inside canvas ───────────────────────────
+    from app.helpers.solution_agent import get_solutions_for_all_bugs, render_all_solutions_html
+
+    if st.session_state.get("solutions_data") is not None:
+        sol_html = render_all_solutions_html(st.session_state.solutions_data)
+        sol_loaded = "true"
+    else:
+        sol_html = '<div style="padding:2rem 1rem;text-align:center;color:#9896a8;font-size:0.85rem;">Click the button above to generate AI solutions.<br><small>Takes 15–30 seconds.</small></div>'
+        sol_loaded = "false"
+
+    # ── The actual canvas panel rendered as an HTML component ─────────────────
+    # ── The actual canvas panel rendered as an HTML component ─────────────────
+    components.html(f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+    <style>
+      * {{ box-sizing: border-box; margin: 0; padding: 0; font-family: 'Inter', sans-serif; }}
+      body {{ background: transparent; overflow: hidden; }}
+
+      #panel {{
+        position: fixed;
+        top: 0; right: 0; bottom: 0;
+        width: 100%;
+        background: #ffffff;
+        border-left: 1px solid #e8e6df;
+        box-shadow: -4px 0 24px rgba(0,0,0,0.07);
+        display: flex; flex-direction: column;
+        z-index: 99999;
+      }}
+
+      #drag-handle {{
+        position: absolute;
+        top: 0; left: -10px; bottom: 0;
+        width: 20px;
+        cursor: col-resize;
+        z-index: 100001;
+        display: flex; align-items: center; justify-content: center;
+        background: transparent;
+      }}
+      #drag-handle::after {{
+        content: '';
+        width: 5px; height: 52px;
+        background: #c4b5fd;
+        border-radius: 3px;
+        transition: background 0.15s, width 0.15s;
+      }}
+      #drag-handle:hover::after {{ background: #6c47ff; width: 6px; }}
+
+      #panel-header {{
+        padding: 1rem 1.1rem 0.85rem;
+        border-bottom: 1px solid #e8e6df;
+        flex-shrink: 0;
+      }}
+      #panel-title {{
+        font-size: 0.95rem; font-weight: 700; color: #1c1b20;
+        display: flex; align-items: center; justify-content: space-between;
+      }}
+      #panel-sub {{
+        font-size: 0.7rem; color: #9896a8; margin-top: 3px;
+      }}
+      #close-btn {{
+        background: none; border: none; cursor: pointer;
+        font-size: 1rem; color: #9896a8; padding: 0.1rem 0.3rem;
+        border-radius: 5px; line-height: 1;
+      }}
+      #close-btn:hover {{ background: #f0efe9; color: #1c1b20; }}
+
+      #panel-actions {{
+        padding: 0.7rem 1.1rem;
+        border-bottom: 1px solid #e8e6df;
+        flex-shrink: 0;
+      }}
+      .dl-row {{
+        display: flex; gap: 0.4rem; margin-bottom: 0.5rem;
+      }}
+      .dl-btn {{
+        flex: 1; text-align: center; padding: 0.42rem 0;
+        background: #fff; border: 1px solid #e8e6df; border-radius: 8px;
+        font-size: 0.78rem; font-weight: 600; color: #1c1b20;
+        text-decoration: none; cursor: pointer;
+      }}
+      .dl-btn:hover {{ background: #f8f7f4; border-color: #9896a8; }}
+      .sol-btn {{
+        width: 100%; padding: 0.48rem;
+        background: #ede9ff; border: 1px solid #c4b5fd;
+        border-radius: 8px; font-size: 0.8rem; font-weight: 600;
+        color: #6c47ff; cursor: pointer; text-align: center;
+        margin-top: 0.4rem;
+      }}
+      .sol-btn:hover {{ background: #6c47ff; color: #fff; border-color: #6c47ff; }}
+      .sol-btn.active {{ background: #6c47ff; color: #fff; border-color: #6c47ff; }}
+
+      #panel-body {{
+        flex: 1; overflow-y: auto; padding: 1rem 1.1rem;
+      }}
+      #panel-body::-webkit-scrollbar {{ width: 4px; }}
+      #panel-body::-webkit-scrollbar-thumb {{ background: #e8e6df; border-radius: 2px; }}
+    </style>
+    </head>
+    <body>
+    <div id="panel">
+      <div id="drag-handle" title="Drag to resize"></div>
+
+      <div id="panel-header">
+        <div id="panel-title">
+          <span>📋 Bug Report Canvas</span>
+          <button id="close-btn" title="Close canvas">✕</button>
+        </div>
+        <div id="panel-sub">{len(results)} unique bug{'s' if len(results)!=1 else ''} · {session_label[:45]}{"…" if len(session_label)>45 else ""}</div>
+      </div>
+
+      <div id="panel-actions">
+        <div class="dl-row">
+          <a class="dl-btn" href="data:application/octet-stream;base64,{pdf_b64}" download="bug_report.pdf">📄 PDF</a>
+          <a class="dl-btn" href="data:application/octet-stream;base64,{csv_b64}" download="bug_report.csv">📊 CSV</a>
+          {xlsx_btn}
+        </div>
+        <div class="sol-btn" id="sol-toggle-btn" onclick="toggleView()">
+          💡 Get AI Solutions for All Bugs
+        </div>
+      </div>
+
+      <div id="panel-body">
+        <div id="view-bugs">{cards_html}</div>
+        <div id="view-solutions" style="display:none;">{sol_html}</div>
+      </div>
+    </div>
+
+    <script>
+      // 1. Setup frame references
+      window.frameElement && (window.frameElement.id = 'nlp-canvas-iframe');
+      const iframe = window.parent.document.getElementById('nlp-canvas-iframe');
+
+      // 2. Define state variables
+      let dragging = false, startX = 0, startW = {w};
+      let showingSolutions = false;
+      let solutionsLoaded = {sol_loaded};
+
+      // 3. Define all functions securely at the top
+      function pushChat(newW) {{
+        window.parent.document.documentElement.style.setProperty('--canvas-width', newW + 'px');
+      }}
+
+      function applyPosition() {{
+        if (!iframe) return;
+        iframe.style.position   = 'fixed';
+        iframe.style.top        = '0';
+        iframe.style.right      = '0';
+        iframe.style.width      = '{w}px';
+        iframe.style.height     = '100vh';
+        iframe.style.zIndex     = '99990';
+        iframe.style.border     = 'none';
+        iframe.style.boxShadow  = '-4px 0 24px rgba(0,0,0,0.08)';
+
+        let el = iframe.parentElement;
+        for (let i = 0; i < 15 && el && el !== window.parent.document.body; i++) {{
+          if (el.hasAttribute('data-testid')) {{
+            el.style.cssText = 'width:0!important;height:0!important;min-height:0!important;padding:0!important;margin:0!important;overflow:hidden!important;position:absolute!important;';
+            break;
+          }}
+          el = el.parentElement;
+        }}
+      }}
+
+      function closePanel() {{
+        if (iframe) iframe.style.width = '0px';
+        pushChat(0);
+        window.parent.postMessage({{ type:'streamlit:setComponentValue', value: 0 }}, '*');
+      }}
+
+      function toggleView() {{
+        showingSolutions = !showingSolutions;
+        const bugs = document.getElementById('view-bugs');
+        const sols = document.getElementById('view-solutions');
+        const btn  = document.getElementById('sol-toggle-btn');
+        if (showingSolutions) {{
+          bugs.style.display = 'none';
+          sols.style.display = 'block';
+          btn.textContent    = '← Back to Bug Cards';
+          btn.classList.add('active');
+          if (!solutionsLoaded) {{
+            sols.innerHTML = '<div style="padding:2rem;text-align:center;color:#9896a8;font-size:0.85rem;">⏳ Generating AI solutions…<br><small>This takes 15-30 seconds. The canvas will refresh automatically.</small></div>';
+            
+            const buttons = Array.from(window.parent.document.querySelectorAll('button'));
+            const targetBtn = buttons.find(b => b.textContent && b.textContent.includes('GenSolTrigger'));
+            if (targetBtn) {{
+                targetBtn.click();
+            }} else {{
+                console.error("GenSolTrigger button not found!");
+            }}
+            solutionsLoaded = true;
+          }}
+        }} else {{
+          bugs.style.display = 'block';
+          sols.style.display = 'none';
+          btn.textContent    = '💡 Get AI Solutions for All Bugs';
+          btn.classList.remove('active');
+        }}
+      }}
+
+      function onMove(e) {{
+        if (!dragging) return;
+        const vw   = window.parent.innerWidth;
+        const minW = Math.floor(vw * 0.35);
+        const maxW = Math.floor(vw * 0.80);
+        const diff = startX - e.clientX;
+        const newW = Math.max(minW, Math.min(maxW, startW + diff));
+        if (iframe) iframe.style.width = newW + 'px';
+        pushChat(newW);
+      }}
+
+      function onUp(e) {{
+        if (!dragging) return;
+        dragging = false;
+        window.parent.document.body.style.cursor     = '';
+        window.parent.document.body.style.userSelect = '';
+        const overlay = window.parent.document.getElementById('drag-overlay');
+        if (overlay) overlay.remove();
+        const finalW = iframe ? iframe.offsetWidth : startW;
+        pushChat(finalW);
+        window.parent.postMessage({{ type:'streamlit:setComponentValue', value: finalW }}, '*');
+      }}
+
+      // 4. Execute scripts and attach listeners
+      applyPosition();
+      pushChat({w});
+
+      document.getElementById('close-btn').addEventListener('click', closePanel);
+      document.getElementById('sol-toggle-btn').addEventListener('click', toggleView);
+
+      const handle = document.getElementById('drag-handle');
+      if (handle) {{
+        handle.addEventListener('mousedown', e => {{
+          e.preventDefault();
+          e.stopPropagation();
+          dragging = true;
+          const rect = iframe ? iframe.getBoundingClientRect() : {{left: 0}};
+          startX = rect.left + e.clientX;
+          startW = iframe ? iframe.offsetWidth : {w};
+          window.parent.document.body.style.cursor     = 'col-resize';
+          window.parent.document.body.style.userSelect = 'none';
+          let overlay = window.parent.document.getElementById('drag-overlay');
+          if (!overlay) {{
+            overlay = window.parent.document.createElement('div');
+            overlay.id = 'drag-overlay';
+            overlay.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;z-index:99998;cursor:col-resize;';
+            window.parent.document.body.appendChild(overlay);
+          }}
+        }});
+      }}
+
+      window.parent.document.addEventListener('mousemove', onMove);
+      window.parent.document.addEventListener('mouseup',   onUp);
+
+      if ({'true' if st.session_state.pop('_auto_show_solutions', False) else 'false'}) {{
+        toggleView();
+      }}
+    </script>
+    </body>
+    </html>
+    """, height=800, scrolling=False)
+
+    # ── Handle Solutions Trigger from iframe ──────────────────────────────────
+    # ── Handle Solutions Trigger from iframe ──────────────────────────────────
+    st.markdown('''
+    <div id="hide-next-button"></div>
+    <style>
+        div:has(> #hide-next-button) + div[data-testid="element-container"],
+        div:has(> #hide-next-button) + div.element-container {
+            position: absolute !important;
+            left: -9999px !important;
+            opacity: 0 !important;
+        }
+    </style>
+    ''', unsafe_allow_html=True)
+    
+    if st.button("GenSolTrigger", key="sol_hidden_btn"):
+        with st.spinner("Searching Stack Overflow & GitHub Issues for all bugs…"):
+            st.session_state.solutions_data = get_solutions_for_all_bugs(results)
+        st.session_state["_auto_show_solutions"] = True
+        st.rerun()
+        
+def render_export_buttons(pdf_bytes: bytes, results: list, bugs: list, dup_map: dict):
+    """Kept for backward compatibility — canvas replaces this."""
+    pass
 
 
 def render_input_bar():
-    st.markdown(
-        '<hr style="border:none;border-top:1px solid rgba(255,255,255,0.07);margin:0.75rem 0;">',
-        unsafe_allow_html=True
-    )
-    st.markdown('<div class="ibar-outer"><div class="ibar-wrap">', unsafe_allow_html=True)
+    st.markdown('<div style="height: 100px;"></div>', unsafe_allow_html=True)
 
-    col_plus, col_text, col_send = st.columns([0.6, 10, 0.8])
+    col_plus, col_text, col_send = st.columns([0.8, 10, 0.8], gap="small")
 
     with col_plus:
-        if st.button("＋", key="plus_btn", help="Upload PDF bug report"):
+        st.markdown('<span class="input-bar-hook"></span>', unsafe_allow_html=True)
+        if st.button("＋", key="plus_btn", help="Upload PDF"):
             st.session_state.show_upload = not st.session_state.get("show_upload", False)
             st.rerun()
 
     with col_text:
-        text_val = st.text_input(
+        text_val = st.text_area(
             "msg",
-            placeholder="Paste bug descriptions or use + to upload PDF…",
+            placeholder="Write a bug…",
             label_visibility="collapsed",
-            key="user_text_input"
+            key="user_text_input",
+            height=44,
         )
 
     with col_send:
-        send_clicked = st.button("➤", key="send_btn", help="Send")
+        send_clicked = st.button("➤", key="send_btn")
 
-    st.markdown("</div></div>", unsafe_allow_html=True)
+    if text_val:
+        st.markdown(
+            f'<div style="text-align:right;font-size:0.62rem;color:#9896a8;'
+            f'margin-top:0.1rem;">{len(text_val)} chars · {len(text_val.split())} words</div>',
+            unsafe_allow_html=True,
+        )
+
     return send_clicked
