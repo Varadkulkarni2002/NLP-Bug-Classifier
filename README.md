@@ -86,7 +86,7 @@ pip install -r requirements.txt
 echo GROQ_API_KEY=your_groq_key_here > .env
 
 :: 5. (Optional) Verify models download correctly
-python verify_models.py
+python tests/verify_models.py
 
 :: 6. Run the app
 streamlit run run.py
@@ -112,7 +112,7 @@ pip install -r requirements.txt
 echo "GROQ_API_KEY=your_groq_key_here" > .env
 
 # 5. (Optional) Verify models download correctly
-python verify_models.py
+python tests/verify_models.py
 
 # 6. Run the app
 streamlit run run.py
@@ -158,7 +158,7 @@ The download happens silently in the background when you first `streamlit run ru
 
 To verify manually at any time:
 ```bash
-python verify_models.py
+python tests/verify_models.py
 ```
 
 ---
@@ -188,7 +188,6 @@ After analysis, a slide-out canvas shows all classified bugs with export buttons
 ```
 NLP-Bug-Classifier/
 ├── run.py                    ← Entry point — run this
-├── verify_models.py          ← Model download checker
 ├── requirements.txt
 ├── .env                      ← Your Groq key (never commit this)
 ├── .gitignore
@@ -208,6 +207,8 @@ NLP-Bug-Classifier/
 │   │   └── .bug_keywords.json
 │   └── ui/
 │       └── components.py
+├── tests/
+│   └── verify_models.py      ← Run to check/download models
 ├── models/                   ← Auto-created on first run
 ├── sessions/                 ← Auto-created, gitignored
 ├── data/                     ← Training data (CSV)
@@ -232,7 +233,7 @@ GROQ_API_KEY=gsk_xxxxxxxxxxxxxxxxxxxx
 **Models not downloading**
 ```bash
 pip install huggingface_hub
-python verify_models.py
+python tests/verify_models.py
 ```
 If the repo is private, authenticate first:
 ```bash
