@@ -1,13 +1,52 @@
-# Secrets
-.env
-
-# Python junk
-__pycache__/
-*.pyc
-
-# Streamlit/App data
-.streamlit/
+# ── Sessions (user data, never commit) ───────────────────────────────────────
+sessions/
 app/chat_sessions.json
 
-# Local model folder (since we are downloading it dynamically now)
-models/
+# ── PowerPoint files ──────────────────────────────────────────────────────────
+*.pptx
+*.ppt
+
+# ── Python ────────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyo
+.Python
+*.egg-info/
+dist/
+build/
+*.egg
+
+# ── Virtual environments ──────────────────────────────────────────────────────
+venv/
+.venv/
+env/
+.env/
+ENV/
+
+# ── Environment variables (keep .env out of git) ──────────────────────────────
+.env
+*.env
+
+# ── IDE ───────────────────────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# ── Jupyter ───────────────────────────────────────────────────────────────────
+.ipynb_checkpoints/
+*.ipynb
+
+# ── Logs & temp ───────────────────────────────────────────────────────────────
+*.log
+*.tmp
+*.bak
+tmp/
+temp/
+
+# ── OS ────────────────────────────────────────────────────────────────────────
+.DS_Store
+desktop.ini

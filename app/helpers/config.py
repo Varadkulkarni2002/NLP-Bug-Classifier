@@ -4,6 +4,7 @@ import torch
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+# ── Model paths ───────────────────────────────────────────────────────────────
 SBERT_PATH      = os.path.join(BASE_DIR, "models", "best_bugzilla_sbert")
 CLASSIFIER_PATH = os.path.join(BASE_DIR, "models", "classifier", "best_model.pt")
 CONFIG_PATH     = os.path.join(BASE_DIR, "models", "classifier", "run_config.json")
@@ -19,11 +20,40 @@ DATA_SBERT_TEST       = os.path.join(BASE_DIR, "data", "sbert", "sbert_test.csv"
 
 CHAT_HISTORY_PATH = os.path.join(BASE_DIR, "app", "chat_sessions.json")
 
+# ── Auto-download models from HuggingFace if not present locally ──────────────
+HF_REPO_ID = "Varadkulkarni2002/nlp-bug-classifier-models"
+
+def _ensure_models():
+    needs_download = (
+        not os.path.isdir(SBERT_PATH)
+        or not os.path.isfile(CLASSIFIER_PATH)
+        or not os.path.isfile(CONFIG_PATH)
+    )
+    if needs_download:
+        try:
+            from huggingface_hub import snapshot_download
+            print(f"[config] Downloading models from HuggingFace: {HF_REPO_ID}")
+            snapshot_download(
+                repo_id=HF_REPO_ID,
+                repo_type="model",
+                local_dir=os.path.join(BASE_DIR, "models"),
+                local_dir_use_symlinks=False,
+                ignore_patterns=["minilm/*"],  # ← skip unused MiniLM
+            )
+            print("[config] Models downloaded successfully.")
+        except ImportError:
+            raise RuntimeError("huggingface_hub not installed. Run: pip install huggingface_hub")
+        except Exception as e:
+            print(f"[config] Warning: Could not download models — {e}")
+
+_ensure_models()
+
+# ── Runtime settings ──────────────────────────────────────────────────────────
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
 TEMPERATURE      = 0.6
 CONF_THRESHOLD   = 0.60
-DEDUP_THRESHOLD  = 0.82
+DEDUP_THRESHOLD  = 0.86
 MAX_TOKEN_LENGTH = 256
 
 
@@ -58,3 +88,4 @@ SEVERITY_COLORS = {
 APP_TITLE    = "NLP Bug Classifier"
 APP_VERSION  = "0.2.0"
 APP_ICON     = "🐛"
+

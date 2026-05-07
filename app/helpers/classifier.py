@@ -1,4 +1,7 @@
+import json
+import re
 import torch
+import os
 import torch.nn as nn
 import streamlit as st
 from collections import OrderedDict
@@ -8,6 +11,89 @@ from app.helpers.config import (
     TEMPERATURE, CONF_THRESHOLD,
     BUG_TYPE_LABELS, SEVERITY_LABELS, FIX_TIME_LABELS,
 )
+
+
+_KEYWORD_PATH = os.path.join(os.path.dirname(__file__), ".bug_keywords.json")
+
+def _load_keywords() -> dict:
+    try:
+        with open(_KEYWORD_PATH, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+_KEYWORDS = _load_keywords()
+
+import threading
+_text_store = threading.local()
+
+def _set_text(t: str):
+    _text_store.value = t
+
+def _get_text() -> str:
+    return getattr(_text_store, "value", "")
+
+
+def _keyword_vote(text: str) -> dict[str, float]:
+    """
+    Returns a score per bug type based on keyword evidence.
+    Strong match = 1.0 per hit, weak match = 0.3 per hit.
+    Exclude keywords cancel the category entirely.
+    Silent — never surfaces to the user.
+    """
+    text_lower = text.lower()
+    
+    words = set(re.findall(r"[a-z0-9/]+", text_lower))
+    scores: dict[str, float] = {}
+
+    for category, kw_data in _KEYWORDS.items():
+        score = 0.0
+       
+        excluded = any(
+            excl in text_lower for excl in kw_data.get("exclude", [])
+        )
+        for kw in kw_data.get("strong", []):
+            if kw in text_lower:
+                score += 1.0
+        for kw in kw_data.get("weak", []):
+            if kw in text_lower:
+                score += 0.3
+        if excluded and score < 2.0:
+            
+            score = -1.0
+        scores[category] = score
+
+    return scores
+
+
+def _apply_safety_net(
+    bert_label: str,
+    bert_conf: float,
+    probs: "torch.Tensor",
+) -> tuple[str, float]:
+    text = _get_text()
+    if not text or not _KEYWORDS:
+        return bert_label, bert_conf
+
+    kv = _keyword_vote(text)
+    if not kv:
+        return bert_label, bert_conf
+
+    best_kw_cat   = max(kv, key=kv.get)
+    best_kw_score = kv[best_kw_cat]
+    bert_kw_score = kv.get(bert_label, 0.0)
+
+    if (
+        bert_conf < CONF_THRESHOLD
+        and best_kw_score >= 2.0
+        and best_kw_score - bert_kw_score >= 2.0
+        and best_kw_cat in BUG_TYPE_LABELS
+    ):
+        idx      = BUG_TYPE_LABELS.index(best_kw_cat)
+        new_conf = float(probs[idx].item())
+        return best_kw_cat, new_conf
+
+    return bert_label, bert_conf
 
 
 class AttentionPooling(nn.Module):
@@ -80,6 +166,7 @@ def load_classifier():
 
 
 def classify_bug(text: str, tokenizer, model) -> dict:
+    _set_text(text)   # store for safety net — never surfaces to user
     model.eval()
     enc  = tokenizer(
         text,
@@ -103,11 +190,16 @@ def classify_bug(text: str, tokenizer, model) -> dict:
     ft_conf, ft_idx = ft_probs.max(0)
 
     bug_type = BUG_TYPE_LABELS[bt_idx.item()]
-    severity  = SEVERITY_LABELS[sv_idx.item()]
-    fix_time  = FIX_TIME_LABELS[ft_idx.item()]
+    severity = SEVERITY_LABELS[sv_idx.item()]
+    fix_time = FIX_TIME_LABELS[ft_idx.item()]
+
+
+    bug_type, bt_conf_val = _apply_safety_net(bug_type, bt_conf.item(), bt_probs)
+    bt_conf_final = round(bt_conf_val * 100, 1)
+   
 
     low_confidence = (
-        bt_conf.item() < CONF_THRESHOLD or
+        bt_conf_val < CONF_THRESHOLD or
         sv_conf.item() < CONF_THRESHOLD or
         ft_conf.item() < CONF_THRESHOLD
     )
@@ -120,7 +212,7 @@ def classify_bug(text: str, tokenizer, model) -> dict:
         "bug_type":      bug_type,
         "severity":      severity,
         "fix_time":      fix_time,
-        "bt_conf":       round(bt_conf.item() * 100, 1),
+        "bt_conf":       bt_conf_final,
         "sv_conf":       round(sv_conf.item() * 100, 1),
         "ft_conf":       round(ft_conf.item() * 100, 1),
         "bt_candidates": top2(BUG_TYPE_LABELS, bt_probs),

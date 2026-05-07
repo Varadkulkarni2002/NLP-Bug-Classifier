@@ -434,15 +434,14 @@ def render_sidebar():
         st.divider()
 
         if st.button("＋  New analysis", key="new_chat_btn", use_container_width=True):
-            for k in ["results", "pdf_bytes", "bugs", "dup_map", "pending_text",
-                      "pending_file", "user_label", "session_id",
-                      "solutions_data", "general_answer"]:
-                st.session_state[k] = None
-            st.session_state.show_upload    = False
-            st.session_state.processing     = False
-            st.session_state.show_solutions = False
-            st.session_state.total_bugs     = 0
-            st.session_state.dup_count      = 0
+            st.session_state.analyses        = []
+            st.session_state.session_id      = None
+            st.session_state.active_canvas   = -1
+            st.session_state.processing      = False
+            st.session_state.show_upload     = False
+            st.session_state.show_solutions  = False
+            st.session_state.general_answer  = None
+            st.session_state.canvas_width_px = 480
             st.rerun()
 
         st.markdown("**Recent Sessions**")
@@ -452,8 +451,8 @@ def render_sidebar():
         if sessions:
             for i, s in enumerate(sessions[:15]):
                 label   = s["label"]
-                ts      = s["timestamp"][:10]
-                caption = f'{s["total"]} bugs · {s["dups"]} dups · {ts}'
+                ts      = s.get("updated", s.get("created", ""))[:10]
+                caption = f'{s.get("count", 0)} analyses · {ts}'
                 if st.button(
                     label[:36] + ("…" if len(label) > 36 else ""),
                     key=f'sess_{i}_{s["id"]}',
@@ -462,19 +461,28 @@ def render_sidebar():
                 ):
                     loaded = load_session(s["id"])
                     if loaded:
-                        st.session_state.results    = loaded["results"]
-                        st.session_state.bugs       = loaded["bugs"]
-                        st.session_state.dup_map    = {
-                            r["original_index"]: r.get("duplicates", [])
-                            for r in loaded["results"]
-                        }
-                        st.session_state.total_bugs = loaded["total_bugs"]
-                        st.session_state.dup_count  = loaded["dup_count"]
-                        st.session_state.session_id = loaded["id"]
-                        st.session_state.user_label = loaded["label"]
-                        st.session_state.pdf_bytes  = None
-                        st.session_state.show_solutions = False
-                        st.session_state.solutions_data = None
+                        raw_analyses = loaded.get("analyses", [])
+                        # Rebuild in-memory analyses list from JSON
+                        analyses = []
+                        for a in raw_analyses:
+                            dm = a.get("dup_map", {})
+                            analyses.append({
+                                "index":          a["index"],
+                                "user_label":     a.get("user_label", ""),
+                                "results":        a.get("results", []),
+                                "bugs":           a.get("bugs", []),
+                                "dup_map":        {int(k): v for k, v in dm.items()},
+                                "total":          a.get("total", 0),
+                                "dups":           a.get("dups", 0),
+                                "pdf_bytes":      None,  # rebuild on demand
+                                "solutions_data": a.get("solutions_data"),
+                            })
+                        st.session_state.analyses        = analyses
+                        st.session_state.session_id      = loaded["id"]
+                        st.session_state.active_canvas   = len(analyses) - 1 if analyses else -1
+                        st.session_state.show_solutions  = False
+                        st.session_state.processing      = False
+                        st.session_state.general_answer  = None
                         st.rerun()
 
             st.divider()
@@ -758,7 +766,8 @@ def render_bug_card(r: dict, idx: int, bugs: list[str], dup_map: dict, show_solu
     </div>""")
 
 def render_canvas(results: list, bugs: list, dup_map: dict,
-                  pdf_bytes: bytes, session_label: str = "Bug Report"):
+                  pdf_bytes: bytes, session_label: str = "Bug Report",
+                  analysis_idx: int = 0, solutions_data: list | None = None):
     """Claude-style right panel: Breaks out of the iframe, anchors right, drag-to-resize."""
     import streamlit.components.v1 as components
     from app.helpers.exporter import export_csv, export_xlsx
@@ -822,21 +831,47 @@ def render_canvas(results: list, bugs: list, dup_map: dict,
             f'</div>{sim_block}</div>'
         )
 
-    # ── Prepare download data as base64 for inline links ─────────────────────
-    # ── Prepare download data as base64 for inline links ─────────────────────
+    # ── Prepare download data ─────────────────────────────────────────────────
     import base64
-    # FIX: Ensure pdf_bytes doesn't cause a NoneType crash!
-    safe_pdf = pdf_bytes if pdf_bytes else b""
-    pdf_b64  = base64.b64encode(safe_pdf).decode()
+    from app.helpers.pdf_report import _build_pdf_with_solutions
+
+    # Rebuild PDF with solutions if available
+    # Use the solutions_data passed in as parameter (already synced from analyses list)
+    if not pdf_bytes:
+        from app.helpers.pdf_report import build_pdf
+        try:
+            pdf_bytes = build_pdf(results, bugs, dup_map, len(bugs), len(bugs) - len(results))
+        except Exception:
+            pdf_bytes = b""
+    final_pdf = _build_pdf_with_solutions(results, bugs, dup_map, pdf_bytes, solutions_data) if solutions_data else pdf_bytes
+    if not final_pdf:
+        final_pdf = b""
+
+    # CSV — text/csv works in iframes
     csv_data = export_csv(results, bugs, dup_map)
-    csv_b64  = base64.b64encode(csv_data if isinstance(csv_data, bytes) else csv_data.encode()).decode()
+    csv_b64  = base64.b64encode(
+        csv_data if isinstance(csv_data, bytes) else csv_data.encode()
+    ).decode()
+
+    # XLSX — octet-stream forces download in iframe
     try:
         xlsx_data = export_xlsx(results, bugs, dup_map)
         xlsx_b64  = base64.b64encode(xlsx_data).decode()
-        # Changed to octet-stream to force download in sandboxed iframe
-        xlsx_btn  = f'<a class="dl-btn" href="data:application/octet-stream;base64,{xlsx_b64}" download="bug_report.xlsx">📗 XLSX</a>'
+        xlsx_btn  = f'<a class="dl-btn" href="data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;base64,{xlsx_b64}" download="bug_report.xlsx" target="_blank">📗 XLSX</a>'
     except Exception:
         xlsx_btn = ""
+
+    # PDF download MUST be outside the iframe — browsers block PDF data: URIs from iframes
+    if final_pdf:
+        st.download_button(
+            label="📄 Download PDF Report",
+            data=final_pdf,
+            file_name="bug_report.pdf",
+            mime="application/pdf",
+            key=f"canvas_pdf_dl_{analysis_idx}",
+        )
+    else:
+        st.caption("⚠ PDF unavailable — re-run the analysis.")
 
     # ── Inject CSS variable so input bar and block-container auto-adjust ────
    # ── Inject CSS variable so input bar and block-container auto-adjust ────
@@ -851,11 +886,11 @@ def render_canvas(results: list, bugs: list, dup_map: dict,
     # ── Build solutions HTML to embed inside canvas ───────────────────────────
     from app.helpers.solution_agent import get_solutions_for_all_bugs, render_all_solutions_html
 
-    if st.session_state.get("solutions_data") is not None:
-        sol_html = render_all_solutions_html(st.session_state.solutions_data)
+    if solutions_data is not None:
+        sol_html   = render_all_solutions_html(solutions_data)
         sol_loaded = "true"
     else:
-        sol_html = '<div style="padding:2rem 1rem;text-align:center;color:#9896a8;font-size:0.85rem;">Click the button above to generate AI solutions.<br><small>Takes 15–30 seconds.</small></div>'
+        sol_html   = '<div style="padding:2rem 1rem;text-align:center;color:#9896a8;font-size:0.85rem;">Click the button above to generate AI solutions.<br><small>Takes 15–30 seconds.</small></div>'
         sol_loaded = "false"
 
     # ── The actual canvas panel rendered as an HTML component ─────────────────
@@ -962,8 +997,7 @@ def render_canvas(results: list, bugs: list, dup_map: dict,
 
       <div id="panel-actions">
         <div class="dl-row">
-          <a class="dl-btn" href="data:application/octet-stream;base64,{pdf_b64}" download="bug_report.pdf">📄 PDF</a>
-          <a class="dl-btn" href="data:application/octet-stream;base64,{csv_b64}" download="bug_report.csv">📊 CSV</a>
+          <a class="dl-btn" href="data:text/csv;base64,{csv_b64}" download="bug_report.csv" target="_blank">📊 CSV</a>
           {xlsx_btn}
         </div>
         <div class="sol-btn" id="sol-toggle-btn" onclick="toggleView()">
@@ -1126,9 +1160,7 @@ def render_canvas(results: list, bugs: list, dup_map: dict,
     ''', unsafe_allow_html=True)
     
     if st.button("GenSolTrigger", key="sol_hidden_btn"):
-        with st.spinner("Searching Stack Overflow & GitHub Issues for all bugs…"):
-            st.session_state.solutions_data = get_solutions_for_all_bugs(results)
-        st.session_state["_auto_show_solutions"] = True
+        st.session_state["_canvas_msg"] = "gen_solutions"
         st.rerun()
         
 def render_export_buttons(pdf_bytes: bytes, results: list, bugs: list, dup_map: dict):

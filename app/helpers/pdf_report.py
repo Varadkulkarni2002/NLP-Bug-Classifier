@@ -107,3 +107,107 @@ def build_pdf(
     doc.build(story)
     buf.seek(0)
     return buf.read()
+
+
+def _build_pdf_with_solutions(
+    results: list[dict],
+    bugs: list[str],
+    dup_map: dict,
+    base_pdf_bytes: bytes,
+    solutions_data: list[dict] | None,
+) -> bytes:
+    """Rebuild PDF from scratch including solutions section if available."""
+    if not solutions_data:
+        return base_pdf_bytes
+
+    buf = io.BytesIO()
+    doc = SimpleDocTemplate(buf, pagesize=letter,
+                            rightMargin=0.75*inch, leftMargin=0.75*inch,
+                            topMargin=0.75*inch,   bottomMargin=0.75*inch)
+    s     = _styles()
+    total = sum(1 for _ in bugs)
+    dup_c = len(bugs) - len(results)
+    story = []
+
+    # ── Header ───────────────────────────────────────────────────────────────
+    story.append(Paragraph(APP_TITLE, s["title"]))
+    story.append(Paragraph(f"Full Bug Triage Report with AI Solutions · v{APP_VERSION}", s["body"]))
+    story.append(Spacer(1, 0.2*inch))
+    story.append(HRFlowable(width="100%", thickness=1, color=colors.HexColor("#7c5cfc")))
+    story.append(Spacer(1, 0.15*inch))
+
+    # ── Summary ───────────────────────────────────────────────────────────────
+    from collections import Counter
+    story.append(Paragraph("Analytics Summary", s["h2"]))
+    story.append(Paragraph(f"Total Bugs Extracted: <b>{len(bugs)}</b>", s["body"]))
+    story.append(Paragraph(f"Duplicates Detected: <b>{dup_c}</b>", s["body"]))
+    story.append(Paragraph(f"Unique Bugs Classified: <b>{len(results)}</b>", s["body"]))
+    tc = Counter([r["bug_type"] for r in results])
+    sc = Counter([r["severity"] for r in results])
+    story.append(Paragraph("Bug Type Breakdown:", s["label"]))
+    for bt, cnt in tc.most_common():
+        story.append(Paragraph(f"• {bt}: {cnt}", s["muted"]))
+    story.append(Paragraph("Severity Breakdown:", s["label"]))
+    for sv, cnt in sc.most_common():
+        story.append(Paragraph(f"• {sv}: {cnt}", s["muted"]))
+
+    story += [
+        Spacer(1, 0.15*inch),
+        HRFlowable(width="100%", thickness=1, color=colors.HexColor("#dddddd")),
+        Paragraph("Classified Bugs", s["h2"]),
+    ]
+
+    # ── Bug entries with inline solutions ────────────────────────────────────
+    sol_map = {s_["bug_text"]: s_ for s_ in solutions_data}
+
+    for i, r in enumerate(results):
+        story.append(Spacer(1, 0.1*inch))
+        story.append(Paragraph(f"Bug #{i+1}", s["label"]))
+
+        bug_text = r.get("text", "")
+        if bug_text:
+            story.append(Paragraph(
+                f'"{_safe(bug_text[:200])}{"..." if len(bug_text)>200 else ""}"',
+                s["quote"]
+            ))
+
+        story.append(Paragraph(
+            f"Severity: <b>{r['severity']}</b>  |  "
+            f"Type: <b>{r['bug_type']}</b>  |  "
+            f"Fix Time: <b>{r['fix_time']}</b>",
+            s["body"]
+        ))
+
+        # Include AI solution if available for this bug
+        sol = sol_map.get(bug_text)
+        if sol:
+            gd = sol.get("groq_data", {})
+            why = gd.get("why", "")
+            fix = gd.get("fix", "")
+            code = gd.get("code", "")
+            if why:
+                story.append(Paragraph("AI Analysis — Root Cause:", s["label"]))
+                story.append(Paragraph(_safe(why), s["muted"]))
+            if fix:
+                story.append(Paragraph("Recommended Fix:", s["label"]))
+                story.append(Paragraph(_safe(fix), s["muted"]))
+            if code and code.strip():
+                story.append(Paragraph("Code:", s["label"]))
+                story.append(Paragraph(
+                    f'<font name="Courier" size="8">{_safe(code.strip()[:400])}</font>',
+                    s["muted"]
+                ))
+
+        dup_list = dup_map.get(r["original_index"], [])
+        if dup_list:
+            story.append(Paragraph("Similar duplicate bugs:", s["muted"]))
+            for d in dup_list:
+                dt = bugs[d][:120] + ("..." if len(bugs[d]) > 120 else "")
+                story.append(Paragraph(f'• "{_safe(dt)}"', s["muted"]))
+
+        story.append(HRFlowable(width="100%", thickness=0.5,
+                                color=colors.HexColor("#eeeeee")))
+
+    doc.build(story)
+    buf.seek(0)
+    return buf.read()

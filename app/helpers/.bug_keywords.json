@@ -1,0 +1,113 @@
+{
+  "Crash": {
+    "strong": [
+      "crash", "crashed", "crashes", "crashing", "fatal", "fatal error",
+      "segfault", "segmentation fault", "core dump", "aborted", "abort",
+      "exception", "unhandled exception", "null pointer", "null reference",
+      "access violation", "stack overflow", "out of memory", "oom",
+      "killed", "terminated", "exits", "exit code", "process died",
+      "application stopped", "app stopped", "stopped working",
+      "not responding", "force quit", "force close",
+      "blue screen", "bsod", "kernel panic", "system crash"
+    ],
+    "weak": [
+      "error", "failed", "failure", "broke", "broken", "down",
+      "unexpected", "suddenly", "abruptly", "closes", "closed"
+    ],
+    "exclude": [
+      "freeze", "frozen", "stuck", "hang", "hangs", "lock", "locked",
+      "unresponsive but visible", "ui stuck", "button stuck"
+    ]
+  },
+  "Freeze": {
+    "strong": [
+      "freeze", "frozen", "freezes", "freezing", "froze",
+      "hang", "hangs", "hanging", "hung",
+      "stuck", "stucks", "locked up", "locks up",
+      "unresponsive", "not responding", "stops responding",
+      "infinite loop", "deadlock", "dead lock",
+      "spinner", "loading forever", "loading indefinitely",
+      "mouse stops", "cursor stops", "input stops",
+      "dashboard locked", "ui locked", "interface frozen",
+      "spinning wheel", "spinning cursor"
+    ],
+    "weak": [
+      "slow", "sluggish", "delayed", "lagging", "lag",
+      "pause", "pauses", "intermittent", "intermittently"
+    ],
+    "exclude": [
+      "crash", "crashed", "fatal", "oom", "memory", "exception"
+    ]
+  },
+  "Memory": {
+    "strong": [
+      "memory leak", "memory leaks", "leaking memory",
+      "ram usage", "ram grows", "ram balloons", "ram spikes",
+      "memory usage", "memory consumption", "memory grows",
+      "out of memory", "oom", "memory exhausted",
+      "heap", "heap overflow", "heap dump",
+      "garbage collection", "gc pressure",
+      "memory balloon", "memory ballooning",
+      "8gb", "4gb", "16gb", "ram", "vram",
+      "handle leak", "handle leaks", "resource leak",
+      "object retained", "objects not freed",
+      "memory profile", "memory profiler"
+    ],
+    "weak": [
+      "slow", "performance", "grows over time", "over time",
+      "overnight", "long running", "extended"
+    ],
+    "exclude": [
+      "freeze", "frozen", "hang", "stuck", "ui", "visual", "display"
+    ]
+  },
+  "UI/Visual": {
+    "strong": [
+      "overlap", "overlapping", "overlaps",
+      "layout", "misaligned", "misalignment", "alignment",
+      "rendering", "render", "renders", "display", "displays",
+      "visual", "visually", "appearance",
+      "button not visible", "button hidden", "button overlap",
+      "text overflow", "text cut", "text clipped",
+      "css", "style", "styling", "theme",
+      "dark mode", "light mode", "color scheme",
+      "icon missing", "icon wrong", "icon broken",
+      "flicker", "flickering", "flashes", "flashing",
+      "opacity", "transparent", "z-index",
+      "responsive", "mobile view", "desktop view",
+      "hover state", "hover effect", "tooltip",
+      "font size", "font rendering", "blurry text",
+      "screen glitch", "glitch", "artifact",
+      "broken link visual", "404 page visual"
+    ],
+    "weak": [
+      "looks", "appears", "shown", "shows", "displayed",
+      "page", "screen", "window", "panel"
+    ],
+    "exclude": [
+      "crash", "memory", "hang", "freeze", "exception"
+    ]
+  },
+  "Other": {
+    "strong": [
+      "logic error", "wrong result", "incorrect output",
+      "calculation wrong", "calculation error",
+      "data corruption", "corrupted data", "corrupt",
+      "sync", "synchronization", "out of sync",
+      "permission", "permissions", "access denied",
+      "authentication", "auth failed", "login failed",
+      "broken link", "404", "not found",
+      "timeout", "timed out", "connection timeout",
+      "api error", "api failure", "endpoint",
+      "database error", "db error", "query failed",
+      "config", "configuration", "misconfigured",
+      "wrong value", "incorrect value", "bad data",
+      "notification", "email", "push notification"
+    ],
+    "weak": [
+      "sometimes", "occasionally", "intermittent",
+      "wrong", "incorrect", "unexpected behavior"
+    ],
+    "exclude": []
+  }
+}
