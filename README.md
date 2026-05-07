@@ -17,13 +17,13 @@ It uses a fine-tuned SBERT (Sentence-BERT) model trained on Bugzilla data to emb
 **2 — Classification**
 A custom multi-task BERT model (fine-tuned on `bert-base-uncased`) classifies each unique bug across three axes simultaneously:
 - **Bug Type** — Crash / Freeze / Memory / UI-Visual / Other
-- **Severity** — Critical / Major / Minor
+- **Severity** — Critical / Major / Minor 
 - **Fix Time** — Fast / Medium / Slow
 
 Temperature scaling and a keyword-safety-net keep low-confidence predictions honest instead of confidently wrong.
 
 **3 — AI Solutions**
-For each classified bug, the app queries **Groq's Llama-3.3-70B** to produce a root cause analysis, a recommended fix, and a code snippet — all formatted inline in the canvas panel.
+For each classified bug, the app queries **Groq's Llama-3.3-70B** to produce a root cause analysis, a recommended fix, and a code snippet — all formatted inline in the canvas panel. This was a completely optional case  and not in the process line, added at the end 
 
 Results can be exported as **PDF**, **CSV**, or **XLSX** and every session is saved locally so you can come back to it from the sidebar.
 
@@ -64,7 +64,7 @@ sessions/               ← Local session storage (gitignored)
 | Internet | needed on first run (model download ~500 MB) |
 | Groq API key | free at [console.groq.com](https://console.groq.com) |
 
-> **GPU optional.** The app runs on CPU. A CUDA GPU will make classification faster but is not required.
+> **GPU optional.** The app runs on CPU. A CUDA GPU will make classification faster, but is not required.
 
 ---
 
@@ -279,4 +279,6 @@ The repo includes a GitHub Actions pipeline (`.github/workflows/ci.yml`) that ru
 
 ## Author
 
-**Varad Kulkarni** — NLP Bug Classifier v0.2.0
+**Varad Kulkarni** — NLP Bug Classifier
+**GARGI VYAVHARE** - COLLABORATOR
+
