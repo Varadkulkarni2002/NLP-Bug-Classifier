@@ -249,48 +249,81 @@ def main():
         raw = st.session_state.get("user_text_input", "").strip()
         if raw and not st.session_state.processing:
             bug_indicators = [
-                "bug", "crash", "error", "freeze", "hang", "memory", "leak",
-                "fails", "broken", "overlap", "not working", "issue", "exception",
-                "fatal", "slow", "unresponsive", "closes", "stops", "blank",
-                "missing", "wrong", "incorrect", "typo", "glitch", "ui", "visual",
-                "button", "screen", "app", "application", "software", "login",
-                "upload", "download", "database", "server", "ram", "cpu",
+                # Core bug words
+                "bug", "crash", "crashed", "crashing", "error", "exception",
+                "freeze", "frozen", "hang", "hung", "fatal", "leak", "leaking",
+                "fails", "failed", "failure", "broken", "overlap", "overlapping",
+                "issue", "problem", "glitch", "defect", "fault", "incident",
+                # Symptoms
+                "not working", "doesn't work", "does not work", "won't work",
+                "not loading", "not responding", "not starting", "not opening",
+                "not saving", "not syncing", "not displaying", "not rendering",
+                "unresponsive", "slow", "sluggish", "lagging", "stuck",
+                "closes", "closing", "stops", "stopped", "blank", "black screen",
+                "white screen", "missing", "wrong", "incorrect", "unexpected",
+                "typo", "visual", "display", "render", "distorted", "corrupted",
+                # Hardware / system
+                "gpu", "cpu", "ram", "memory", "disk", "battery", "screen",
+                "keyboard", "mouse", "touchpad", "camera", "microphone", "speaker",
+                "wifi", "bluetooth", "network", "connection", "internet",
+                "driver", "firmware", "hardware", "device", "port", "usb",
+                # Software / platform
+                "app", "application", "software", "program", "process", "service",
+                "browser", "extension", "plugin", "library", "package", "module",
+                "server", "database", "api", "endpoint", "request", "response",
+                "login", "logout", "auth", "authentication", "permission",
+                "upload", "download", "install", "uninstall", "update", "upgrade",
+                "button", "menu", "dropdown", "modal", "popup", "form", "input",
+                "ui", "interface", "page", "tab", "window", "panel", "sidebar",
+                # Problem phrases
+                "can't", "cannot", "unable", "keeps", "always", "never",
+                "sometimes", "intermittent", "randomly", "suddenly",
+                "when i", "when the", "every time", "each time",
             ]
-            raw_lower  = raw.lower()
-            is_bug     = any(w in raw_lower for w in bug_indicators) and len(raw.split()) >= 5
+            raw_lower = raw.lower()
 
-            if is_bug:
+            # Match any keyword indicator
+            keyword_match = any(w in raw_lower for w in bug_indicators)
+
+            # Catch problem sentences even without explicit bug keywords
+            # e.g. "my gpu is not working in mac"
+            problem_phrases = [
+                "not work", "not run", "not open", "not load", "not start",
+                "not show", "not save", "not sync", "not connect", "not respond",
+                "doesn't", "dont", "won't", "wont", "can't", "cant", "cannot",
+                "unable to", "keeps crashing", "keeps freezing", "keeps closing",
+                "stopped working", "no longer", "fails to", "failed to",
+            ]
+            phrase_match = any(p in raw_lower for p in problem_phrases)
+
+            # Lowered word threshold from 5 to 3 — short reports are still valid
+            is_bug = (keyword_match or phrase_match) and len(raw.split()) >= 3
+
+            # Only exact greeting words get a reply — everything else is classified as a bug
+            replies = {
+                "thanks":    "You're welcome! Paste more bugs or upload a PDF anytime.",
+                "thank you": "You're welcome! Let me know if you have more bugs to analyze.",
+                "hi":        "Hello! Paste bug descriptions or upload a PDF to get started.",
+                "hello":     "Hi there! Ready to classify your bugs.",
+                "hey":       "Hey! Paste your bug descriptions or upload a PDF to begin.",
+                "bye":       "Goodbye! Come back whenever you have bugs to triage.",
+                "ok":        "Got it! Let me know when you're ready.",
+                "okay":      "Got it! Let me know when you're ready.",
+                "great":     "Glad to help! Upload more bug reports whenever you're ready.",
+                "yes":       "Great! Go ahead and paste your bug descriptions or upload a PDF.",
+                "no":        "No problem. Let me know when you're ready.",
+            }
+            cleaned_input = raw_lower.strip("!.,? ")
+            if cleaned_input in replies:
+                st.session_state.user_label     = raw
+                st.session_state.general_answer = replies[cleaned_input]
+                st.rerun()
+            else:
+                # Everything else — treat as a bug report and classify it
                 st.session_state.user_label     = raw
                 st.session_state.pending_text   = raw
                 st.session_state.processing     = True
                 st.session_state.general_answer = None
-                st.rerun()
-            else:
-                greetings = ["hi","hello","hey","thanks","thank you","ok","okay",
-                             "great","nice","cool","good","bye","goodbye","yes","no","sure"]
-                is_greeting = any(raw_lower.strip("!.,?") == g for g in greetings)
-                replies = {
-                    "thanks":    "You're welcome! Paste more bugs or upload a PDF anytime.",
-                    "thank you": "You're welcome! Let me know if you have more bugs to analyze.",
-                    "hi":        "Hello! Paste bug descriptions or upload a PDF to get started.",
-                    "hello":     "Hi there! Ready to classify your bugs.",
-                    "hey":       "Hey! Paste your bug descriptions or upload a PDF to begin.",
-                    "bye":       "Goodbye! Come back whenever you have bugs to triage.",
-                    "ok":        "Got it! Let me know when you're ready.",
-                    "okay":      "Got it! Let me know when you're ready.",
-                    "great":     "Glad to help! Upload more bug reports whenever you're ready.",
-                    "yes":       "Great! Go ahead and paste your bug descriptions or upload a PDF.",
-                    "no":        "No problem. Let me know when you're ready.",
-                }
-                if is_greeting:
-                    answer = replies.get(raw_lower.strip("!.,?"), "Got it!")
-                else:
-                    answer = (
-                        "I'm a bug triage assistant. Paste bug descriptions or use "
-                        "the <strong>+</strong> button to upload a PDF."
-                    )
-                st.session_state.user_label     = raw
-                st.session_state.general_answer = answer
                 st.rerun()
 
 
