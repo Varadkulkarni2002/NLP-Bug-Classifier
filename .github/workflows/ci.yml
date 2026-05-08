@@ -16,13 +16,8 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repository with LFS
+      - name: Checkout repository
         uses: actions/checkout@v4
-        with:
-          lfs: true
-
-      - name: Pull LFS files
-        run: git lfs pull
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -54,9 +49,24 @@ jobs:
           python -m py_compile app/helpers/trend_analysis.py
           python -m py_compile app/helpers/solution_agent.py
           python -m py_compile app/ui/components.py
-          python -m py_compile app/main.py
+          python -m py_compile run.py
 
-      - name: Verify model files exist after LFS pull
+      - name: Download models from HuggingFace
+        run: |
+          python - <<'EOF'
+          from huggingface_hub import snapshot_download
+          print("Downloading models from HuggingFace...")
+          snapshot_download(
+              repo_id="Varadkulkarni2002/nlp-bug-classifier-models",
+              repo_type="model",
+              local_dir="models",
+              local_dir_use_symlinks=False,
+              ignore_patterns=["minilm/*"],
+          )
+          print("Download complete.")
+          EOF
+
+      - name: Verify model files exist after download
         run: |
           python - <<'EOF'
           import os
@@ -71,7 +81,13 @@ jobs:
           if missing:
               print(f"MISSING model files: {missing}")
               exit(1)
-          print("All model files present.")
+          # Check no file is suspiciously small (corrupted)
+          for f in files:
+              size = os.path.getsize(f)
+              if size < 1024:
+                  print(f"CORRUPTED (too small): {f} — {size} bytes")
+                  exit(1)
+          print("All model files present and valid.")
           EOF
 
       - name: Verify data files exist
@@ -101,13 +117,8 @@ jobs:
     needs: lint-and-import
 
     steps:
-      - name: Checkout repository with LFS
+      - name: Checkout repository
         uses: actions/checkout@v4
-        with:
-          lfs: true
-
-      - name: Pull LFS files
-        run: git lfs pull
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -126,6 +137,21 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
+
+      - name: Download models from HuggingFace
+        run: |
+          python - <<'EOF'
+          from huggingface_hub import snapshot_download
+          print("Downloading models from HuggingFace...")
+          snapshot_download(
+              repo_id="Varadkulkarni2002/nlp-bug-classifier-models",
+              repo_type="model",
+              local_dir="models",
+              local_dir_use_symlinks=False,
+              ignore_patterns=["minilm/*"],
+          )
+          print("Download complete.")
+          EOF
 
       - name: Run smoke tests
         run: |
@@ -254,13 +280,8 @@ jobs:
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
 
     steps:
-      - name: Checkout repository with LFS
+      - name: Checkout repository
         uses: actions/checkout@v4
-        with:
-          lfs: true
-
-      - name: Pull LFS files
-        run: git lfs pull
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -272,9 +293,24 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
+      - name: Download models from HuggingFace
+        run: |
+          python - <<'EOF'
+          from huggingface_hub import snapshot_download
+          print("Downloading models from HuggingFace...")
+          snapshot_download(
+              repo_id="Varadkulkarni2002/nlp-bug-classifier-models",
+              repo_type="model",
+              local_dir="models",
+              local_dir_use_symlinks=False,
+              ignore_patterns=["minilm/*"],
+          )
+          print("Download complete.")
+          EOF
+
       - name: Verify Streamlit app starts without error
         run: |
-          timeout 30 streamlit run app/main.py \
+          timeout 30 streamlit run run.py \
             --server.headless true \
             --server.port 8501 \
             --server.address localhost \
