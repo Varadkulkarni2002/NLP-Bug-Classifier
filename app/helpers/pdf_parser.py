@@ -2,91 +2,235 @@ import re
 from pypdf import PdfReader
 
 
+# ══════════════════════════════════════════════════════════════════════════════
+#  METADATA / NOISE FILTERS
+#  Lines that should NEVER appear in a bug description
+# ══════════════════════════════════════════════════════════════════════════════
+
+# Exact or pattern matches for lines to throw away entirely
+_NOISE_PATTERNS = [
+    r'^-{3,}.*PAGE.*\d+.*-{3,}$',          # --- PAGE 1 ---
+    r'^page\s+\d+(\s+of\s+\d+)?$',          # Page 1  /  Page 1 of 3
+    r'^-{3,}$',                              # --- separators ---
+    r'^\[.*?\]$',                            # [Image]  [Table]  [Figure]
+    r'^(figure|table|chart|graph|image|photo|screenshot|diagram|shape|object|video|clip|embed)\s*[\d\:\-]',
+    r'^(generated|prepared|created|authored|date|version|rev)\s*[:\-]',
+    r'^(confidential|internal|draft|proprietary)\s*$',
+    r'^\d+\s*$',                             # lone page numbers
+    r'^copyright\s',                         # copyright lines
+    r'^www\.|^http',                         # URLs as standalone lines
+]
+_NOISE_RE = re.compile(
+    '|'.join(_NOISE_PATTERNS),
+    flags=re.IGNORECASE
+)
+
+# Header patterns — these appear at the top of documents
+_HEADER_PATTERNS = [
+    r'^BUG\s+REPORT',
+    r'^TEST\s+REPORT',
+    r'^INCIDENT\s+REPORT',
+    r'^DEFECT\s+REPORT',
+    r'^ISSUE\s+LOG',
+    r'^PROBLEM\s+STATEMENT',
+]
+_HEADER_RE = re.compile('|'.join(_HEADER_PATTERNS), re.IGNORECASE)
+
+
+def _is_noise(line: str) -> bool:
+    """Return True if this line is metadata/noise and should be discarded."""
+    s = line.strip()
+    if not s:
+        return False   # blanks are separators — handled separately
+
+    # ALL CAPS lines longer than 2 words are almost always titles/headers
+    words = s.split()
+    if s.isupper() and len(words) >= 2:
+        return True
+
+    # Student / employee IDs  e.g. MT24AAC007, EMP-2024-001
+    if re.match(r'^[A-Z]{1,5}[\-]?\d{2,}[A-Z]{0,5}\d*$', s):
+        return True
+
+    # Pure name lines — 2-4 Title Case words, no digits, no punctuation
+    if (re.match(r'^[A-Z][a-z]+(?:\s[A-Z][a-z]+){1,3}$', s)
+            and not any(c.isdigit() for c in s)
+            and len(words) <= 4):
+        return True
+
+    # Known noise patterns
+    if _NOISE_RE.match(s):
+        return True
+
+    # Document header lines
+    if _HEADER_RE.match(s):
+        return True
+
+    # Very short lines that are clearly labels, not sentences
+    # e.g. "Title:", "Author:", "Status:", "Priority:"
+    if re.match(r'^[A-Za-z\s]{2,20}:\s*$', s) and len(words) <= 3:
+        return True
+
+    return False
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  MARKER DETECTION
+#  Recognise what kind of list marker starts a line
+# ══════════════════════════════════════════════════════════════════════════════
+
+# Numbered:  1)  1.  1:  Bug 1:  Bug #1:  #1.
+_NUMBERED_RE = re.compile(
+    r'^\s*(?:Bug\s*#?\s*|#\s*)?\d+\s*[\)\.\:\-]\s+\S',
+    re.IGNORECASE
+)
+
+# Bullets: • ● ◦ ▪ ▸ → ‣ ⁃ - * – —
+_BULLET_RE = re.compile(
+    r'^\s*[\•\●\◦\▪\▸\→\‣\⁃\–\—\-\*]\s+\S'
+)
+
+# Letter-based:  a)  b.  A)
+_ALPHA_RE = re.compile(r'^\s*[a-zA-Z]\s*[\)\.\:]\s+\S')
+
+
+def _marker_type(line: str) -> str | None:
+    """Return 'numbered', 'bullet', 'alpha', or None."""
+    if _NUMBERED_RE.match(line):
+        return 'numbered'
+    if _BULLET_RE.match(line):
+        return 'bullet'
+    if _ALPHA_RE.match(line):
+        return 'alpha'
+    return None
+
+
+def _strip_marker(line: str) -> str:
+    """Remove leading list marker from a line."""
+    s = line.strip()
+    # Numbered / Bug N: / #N
+    s = re.sub(r'^(?:Bug\s*#?\s*|#\s*)?\d+\s*[\)\.\:\-]\s+', '', s, flags=re.IGNORECASE)
+    # Bullet
+    s = re.sub(r'^[\•\●\◦\▪\▸\→\‣\⁃\–\—\-\*]\s+', '', s)
+    # Alpha
+    s = re.sub(r'^[a-zA-Z]\s*[\)\.\:]\s+', '', s)
+    return s.strip()
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  CORE EXTRACTOR
+#  Works for numbered lists, bullet lists, and plain paragraphs
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _group_into_bugs(lines: list[str]) -> list[str]:
+    """
+    Walk lines and group them into individual bug descriptions.
+
+    Strategy (in priority order):
+    1. If ANY line has a number/bullet marker → use markers as boundaries
+    2. Otherwise → use blank lines as paragraph boundaries
+    3. Plain sentences with no structure → treat whole block as one bug
+    """
+    # Detect which format this document uses
+    has_numbered = any(_marker_type(l) == 'numbered' for l in lines)
+    has_bullet   = any(_marker_type(l) == 'bullet'   for l in lines)
+    has_alpha    = any(_marker_type(l) == 'alpha'     for l in lines)
+    use_markers  = has_numbered or has_bullet or has_alpha
+
+    bugs    = []
+    current = []   # lines belonging to current bug
+
+    def flush():
+        if current:
+            text = ' '.join(current)
+            text = re.sub(r'\s+', ' ', text).strip()
+            if len(text) > 15:
+                bugs.append(text)
+            current.clear()
+
+    if use_markers:
+        # ── Marker-based splitting ─────────────────────────────────────────
+        for i, line in enumerate(lines):
+            stripped = line.strip()
+            mtype    = _marker_type(line)
+
+            if not stripped:
+                # Blank — peek ahead: if next real line is a new marker → flush
+                for j in range(i + 1, len(lines)):
+                    nxt = lines[j].strip()
+                    if nxt:
+                        if _marker_type(lines[j]):
+                            flush()
+                        break
+                # else keep blank — continuation of current bug
+                continue
+
+            if mtype:
+                # New bug starts
+                flush()
+                current.append(_strip_marker(line))
+            elif current:
+                # Continuation line of current bug
+                current.append(stripped)
+            # Lines before the first marker are noise — ignore
+        flush()
+
+    else:
+        # ── Paragraph-based splitting (no markers found) ───────────────────
+        for line in lines:
+            stripped = line.strip()
+            if not stripped:
+                flush()
+            else:
+                current.append(stripped)
+        flush()
+
+    return bugs
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  PUBLIC API
+# ══════════════════════════════════════════════════════════════════════════════
+
 def extract_paragraphs(uploaded_file) -> list[str]:
-    reader = PdfReader(uploaded_file)
-    full_text = ""
+    reader    = PdfReader(uploaded_file)
+    all_lines = []
     for page in reader.pages:
         text = page.extract_text() or ""
-        # Clean up page numbers / headers like "--- PAGE 1 ---"
-        text = re.sub(r'---\s*PAGE\s*\d+\s*---', '', text, flags=re.IGNORECASE)
-        full_text += text + "\n\n"
+        all_lines.extend(text.split('\n'))
+    all_lines.append('')  # sentinel blank at end
 
-    # Remove generic footer metadata
-    full_text = re.sub(r'Generated by.*?$', '', full_text, flags=re.IGNORECASE | re.MULTILINE)
+    # Step 1: Remove noise lines (keep blanks as separators)
+    clean_lines = [l for l in all_lines if not _is_noise(l)]
 
-    # 1. Smart boundary detection for numbered bugs (e.g., Bug 1, Bug #1, Bug 1:, Bug # 12)
-    # Using a positive lookahead to split the text right before "Bug"
-    chunks = re.split(r'(?i)(?=Bug\s*#?\s*\d+\b)', full_text)
-    
-    paras = []
-    for chunk in chunks:
-        # Check if this chunk is an actual Bug block (ignores intro tables/metadata)
-        if re.match(r'(?i)\s*Bug\s*#?\s*\d+\b', chunk):
-            
-            # Replace single newlines with spaces to fix broken PDF sentences
-            cleaned = re.sub(r'(?<!\n)\n(?!\n)', ' ', chunk)
-            cleaned = re.sub(r'\s+', ' ', cleaned).strip()
-            
-            # General Heuristic: If the text contains quotes, the longest quote 
-            # is almost always the actual bug description (ignores metadata/solutions).
-            quotes = re.findall(r'"([^"]*)"', cleaned)
-            if quotes:
-                longest_quote = max(quotes, key=len)
-                if len(longest_quote) > 20:
-                    paras.append(longest_quote.strip())
-                    continue
-            
-            # Fallback: keep the whole cleaned chunk if no quotes are found
-            if len(cleaned) > 20:
-                paras.append(cleaned)
-
-    if paras:
-        return paras
-
-    # --- 2. Fallback for general PDFs (no "Bug #X" markers) ---
-    clean_text = re.sub(r'(?<!\n)\n(?!\n)', ' ', full_text)
-    blocks = re.split(r'\n{2,}', clean_text)
-    for b in blocks:
-        cleaned = re.sub(r'\s+', ' ', b).strip()
-        # Ignore purely numeric/symbol tables and very short metadata
-        if len(cleaned) > 20 and not re.match(r'^[\d\s,.\-%]+$', cleaned):
-            paras.append(cleaned)
-
-    # 3. Last resort: sentence splitting
-    if len(paras) <= 1 and len(full_text) > 50:
-        by_sentence = re.split(r'(?<=[.!?])\s{1,}', clean_text)
-        paras = [p.strip() for p in by_sentence if len(p.strip()) > 15]
-
-    return paras if paras else [full_text.strip()]
-
-
-def split_text_input(raw: str) -> list[str]:
-    # Use the same robust regex for manual text inputs
-    chunks = re.split(r'(?i)(?=Bug\s*#?\s*\d+\b)', raw)
-    bugs = []
-    for chunk in chunks:
-        if re.match(r'(?i)\s*Bug\s*#?\s*\d+\b', chunk):
-            cleaned = re.sub(r'\s+', ' ', chunk).strip()
-            quotes = re.findall(r'"([^"]*)"', cleaned)
-            if quotes:
-                longest_quote = max(quotes, key=len)
-                if len(longest_quote) > 20:
-                    bugs.append(longest_quote.strip())
-                    continue
-            if len(cleaned) > 10:
-                bugs.append(cleaned)
-    
+    # Step 2: Group into bugs
+    bugs = _group_into_bugs(clean_lines)
     if bugs:
         return bugs
 
-    # Fallback to double newline split
-    by_newline = re.split(r'\n+', raw)
-    if len(by_newline) > 1:
-        bugs = [p.strip() for p in by_newline if len(p.strip()) > 10]
-        if bugs: return bugs
+    # Step 3: Fallback — join everything and sentence-split
+    full_text = ' '.join(l.strip() for l in clean_lines if l.strip())
+    full_text = re.sub(r'\s+', ' ', full_text).strip()
+    by_sentence = re.split(r'(?<=[.!?])\s+', full_text)
+    paras = [p.strip() for p in by_sentence if len(p.strip()) > 15]
+    return paras if paras else [full_text]
 
-    # Final fallback to sentence split
-    by_sentence = re.split(r'(?<=[.!?])\s{2,}', raw)
+
+def split_text_input(raw: str) -> list[str]:
+    """Same pipeline for manually typed / pasted text."""
+    lines = raw.split('\n')
+    lines.append('')  # sentinel
+
+    # Remove noise
+    clean_lines = [l for l in lines if not _is_noise(l)]
+
+    bugs = _group_into_bugs(clean_lines)
+    if bugs:
+        return bugs
+
+    # Fallback: sentence split
+    full_text   = ' '.join(l.strip() for l in clean_lines if l.strip())
+    by_sentence = re.split(r'(?<=[.!?])\s{1,}', full_text)
     bugs = [p.strip() for p in by_sentence if len(p.strip()) > 10]
     return bugs if bugs else [raw]
 
