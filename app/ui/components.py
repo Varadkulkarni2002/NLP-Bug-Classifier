@@ -442,6 +442,11 @@ def render_sidebar():
             st.session_state.show_solutions  = False
             st.session_state.general_answer  = None
             st.session_state.canvas_width_px = 480
+            st.session_state.pending_file    = None
+            st.session_state.pending_text    = None
+            st.session_state.user_label      = ""
+            st.session_state.solutions_data  = None
+            st.session_state["_canvas_msg"]  = None
             st.rerun()
 
         st.markdown("**Recent Sessions**")
@@ -483,6 +488,12 @@ def render_sidebar():
                         st.session_state.show_solutions  = False
                         st.session_state.processing      = False
                         st.session_state.general_answer  = None
+                        st.session_state.pending_file    = None
+                        st.session_state.pending_text    = None
+                        st.session_state.user_label      = ""
+                        st.session_state.solutions_data  = None
+                        st.session_state.canvas_width_px = 480
+                        st.session_state["_canvas_msg"]  = None
                         st.rerun()
 
             st.divider()
@@ -600,7 +611,7 @@ def step_bubble(message: str):
     ai_bubble(f'<div class="step-line"><div class="pdot"></div>{message}</div>')
 
 
-def render_analytics(results: list[dict], total: int, dup_count: int):
+def render_analytics(results: list[dict], total: int, dup_count: int, analysis_idx: int = 0):
     analytics  = compute_session_analytics(results, total, dup_count)
     unique     = analytics["unique"]
     type_cnt   = analytics["type_counts"]
@@ -661,8 +672,9 @@ def render_analytics(results: list[dict], total: int, dup_count: int):
 
     chips_html = f'<div style="margin-bottom:0.85rem;display:flex;flex-wrap:wrap;gap:0.3rem;">{chips}</div>' if chips else ""
 
-    st.markdown(f"""
-    <div style="display:flex;gap:0.75rem;align-items:flex-start;margin-bottom:1.5rem;">
+    _placeholder = st.empty()
+    _placeholder.markdown(f"""
+    <div id="analytics-block-{analysis_idx}" style="display:flex;gap:0.75rem;align-items:flex-start;margin-bottom:1.5rem;">
         <div style="width:32px;height:32px;border-radius:50%;background:#6c47ff;
                     display:flex;align-items:center;justify-content:center;
                     font-size:0.85rem;flex-shrink:0;margin-top:2px;color:#fff;">🐛</div>
@@ -861,14 +873,20 @@ def render_canvas(results: list, bugs: list, dup_map: dict,
     except Exception:
         xlsx_btn = ""
 
-    # PDF download MUST be outside the iframe — browsers block PDF data: URIs from iframes
+    # PDF download — base64 data URI avoids Streamlit media cache expiry (MediaFileStorageError)
     if final_pdf:
-        st.download_button(
-            label="📄 Download PDF Report",
-            data=final_pdf,
-            file_name="bug_report.pdf",
-            mime="application/pdf",
-            key=f"canvas_pdf_dl_{analysis_idx}",
+        import base64 as _b64
+        pdf_b64 = _b64.b64encode(final_pdf).decode()
+        st.markdown(
+            f'''<a href="data:application/pdf;base64,{pdf_b64}"
+                  download="bug_report_{analysis_idx + 1}.pdf"
+                  style="display:inline-block;padding:0.45rem 1.1rem;
+                         background:#6c47ff;color:#fff;border-radius:8px;
+                         font-size:0.82rem;font-weight:600;text-decoration:none;
+                         margin-bottom:0.5rem;cursor:pointer;">
+                📄 Download PDF Report
+            </a>''',
+            unsafe_allow_html=True
         )
     else:
         st.caption("⚠ PDF unavailable — re-run the analysis.")
@@ -1159,7 +1177,7 @@ def render_canvas(results: list, bugs: list, dup_map: dict,
     </style>
     ''', unsafe_allow_html=True)
     
-    if st.button("GenSolTrigger", key="sol_hidden_btn"):
+    if st.button("GenSolTrigger", key=f"sol_hidden_btn_{analysis_idx}"):
         st.session_state["_canvas_msg"] = "gen_solutions"
         st.rerun()
         

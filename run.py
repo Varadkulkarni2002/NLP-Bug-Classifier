@@ -46,6 +46,8 @@ def _init_state():
         "general_answer":   None,
         # Solutions (for active canvas)
         "show_solutions":   False,
+        "solutions_data":   None,
+        "_canvas_msg":      None,
     }
     for k, v in defaults.items():
         if k not in st.session_state:
@@ -112,9 +114,17 @@ def _store_analysis(results, bugs, dup_map, total, dup_count, pdf_bytes, label):
     }
     st.session_state.analyses.append(analysis)
     # Always show the newest canvas
-    st.session_state.active_canvas  = len(st.session_state.analyses) - 1
-    st.session_state.processing     = False
-    st.session_state.show_solutions = False
+    new_idx = len(st.session_state.analyses) - 1
+    st.session_state.active_canvas   = new_idx
+    st.session_state.processing      = False
+    st.session_state.show_solutions  = False
+    # Reset canvas state so it re-renders fresh for the new analysis
+    st.session_state.canvas_width_px = 480
+    st.session_state.solutions_data  = None
+    st.session_state["_canvas_msg"]  = None
+    st.session_state.pending_file    = None
+    st.session_state.pending_text    = None
+    st.session_state.user_label      = ""
     st.rerun()
 
 
@@ -177,7 +187,7 @@ def main():
         # User message
         user_bubble(label)
         ai_bubble("Analysis complete. Here's your full triage report:")
-        render_analytics(results, total, dups)
+        render_analytics(results, total, dups, analysis_idx=i)
         ai_bubble(
             f"Classified <strong>{len(results)}</strong> unique "
             f"bug{'s' if len(results)!=1 else ''}."
@@ -248,58 +258,9 @@ def main():
     if send_clicked:
         raw = st.session_state.get("user_text_input", "").strip()
         if raw and not st.session_state.processing:
-            bug_indicators = [
-                # Core bug words
-                "bug", "crash", "crashed", "crashing", "error", "exception",
-                "freeze", "frozen", "hang", "hung", "fatal", "leak", "leaking",
-                "fails", "failed", "failure", "broken", "overlap", "overlapping",
-                "issue", "problem", "glitch", "defect", "fault", "incident",
-                # Symptoms
-                "not working", "doesn't work", "does not work", "won't work",
-                "not loading", "not responding", "not starting", "not opening",
-                "not saving", "not syncing", "not displaying", "not rendering",
-                "unresponsive", "slow", "sluggish", "lagging", "stuck",
-                "closes", "closing", "stops", "stopped", "blank", "black screen",
-                "white screen", "missing", "wrong", "incorrect", "unexpected",
-                "typo", "visual", "display", "render", "distorted", "corrupted",
-                # Hardware / system
-                "gpu", "cpu", "ram", "memory", "disk", "battery", "screen",
-                "keyboard", "mouse", "touchpad", "camera", "microphone", "speaker",
-                "wifi", "bluetooth", "network", "connection", "internet",
-                "driver", "firmware", "hardware", "device", "port", "usb",
-                # Software / platform
-                "app", "application", "software", "program", "process", "service",
-                "browser", "extension", "plugin", "library", "package", "module",
-                "server", "database", "api", "endpoint", "request", "response",
-                "login", "logout", "auth", "authentication", "permission",
-                "upload", "download", "install", "uninstall", "update", "upgrade",
-                "button", "menu", "dropdown", "modal", "popup", "form", "input",
-                "ui", "interface", "page", "tab", "window", "panel", "sidebar",
-                # Problem phrases
-                "can't", "cannot", "unable", "keeps", "always", "never",
-                "sometimes", "intermittent", "randomly", "suddenly",
-                "when i", "when the", "every time", "each time",
-            ]
             raw_lower = raw.lower()
 
-            # Match any keyword indicator
-            keyword_match = any(w in raw_lower for w in bug_indicators)
-
-            # Catch problem sentences even without explicit bug keywords
-            # e.g. "my gpu is not working in mac"
-            problem_phrases = [
-                "not work", "not run", "not open", "not load", "not start",
-                "not show", "not save", "not sync", "not connect", "not respond",
-                "doesn't", "dont", "won't", "wont", "can't", "cant", "cannot",
-                "unable to", "keeps crashing", "keeps freezing", "keeps closing",
-                "stopped working", "no longer", "fails to", "failed to",
-            ]
-            phrase_match = any(p in raw_lower for p in problem_phrases)
-
-            # Lowered word threshold from 5 to 3 — short reports are still valid
-            is_bug = (keyword_match or phrase_match) and len(raw.split()) >= 3
-
-            # Only exact greeting words get a reply — everything else is classified as a bug
+            # Only these exact words get a greeting reply
             replies = {
                 "thanks":    "You're welcome! Paste more bugs or upload a PDF anytime.",
                 "thank you": "You're welcome! Let me know if you have more bugs to analyze.",
